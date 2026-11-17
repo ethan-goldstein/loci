@@ -1,0 +1,154 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="color-scheme" content="dark" />
+    <meta name="referrer" content="no-referrer" />
+    <meta name="description" content="LOCI: a profiler for how you work with AI. It indexes your own AI coding history on your own machine, searches it by meaning, and shows what you keep having to repeat." />
+    <meta property="og:title" content="LOCI" />
+    <meta property="og:description" content="A map of how you work with AI: a from-scratch vector index over your own coding history, drawn as a particle field." />
+    <meta property="og:type" content="website" />
+    <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2305070b'/%3E%3Ccircle cx='10' cy='20' r='3' fill='%233987e5'/%3E%3Ccircle cx='21' cy='11' r='4' fill='%23d95926'/%3E%3Ccircle cx='23' cy='23' r='2.4' fill='%23199e70'/%3E%3C/svg%3E" />
+    <title>LOCI</title>
+    <link rel="stylesheet" href="./styles.css" />
+  </head>
+  <body>
+    <noscript>
+      <p class="noscript">LOCI's viewer draws with WebGL and needs JavaScript. The source and the measured results are at github.com/ethan-goldstein/loci.</p>
+    </noscript>
+    <canvas id="stage" aria-label="Particle map of your indexed history. Each point is one chunk of a conversation."></canvas>
+    <div id="labels" class="labels" aria-label="Region labels"></div>
+
+    <form id="search-form" class="search" role="search" autocomplete="off">
+      <label class="sr-only" for="q">Search your history</label>
+      <input id="q" name="q" type="search" maxlength="512" placeholder="Search your history…" spellcheck="false" />
+      <div class="segmented" id="search-modes" role="radiogroup" aria-label="Ranking">
+        <button type="button" role="radio" aria-checked="true" data-mode="hybrid" title="Meaning and keywords, fused">hybrid</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="dense" title="Meaning only (vector search)">dense</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="bm25" title="Keywords only">bm25</button>
+        <button type="button" role="radio" aria-checked="false" data-mode="recent" title="Hybrid plus a recency signal">recent</button>
+      </div>
+      <button id="open-repeats" type="button" class="ghost pill" aria-pressed="false" title="Things you told your assistant in several separate sessions">what you keep repeating</button>
+    </form>
+
+    <div class="left">
+      <header class="brand">
+        <h1>LOCI</h1>
+        <p id="summary" class="muted">loading…</p>
+        <p class="brand-row">
+          <span id="demo-badge" class="badge" hidden>demo data</span>
+          <button id="about-open" type="button" class="ghost" hidden>about</button>
+        </p>
+      </header>
+      <nav id="legend" class="panel legend" aria-label="Projects"></nav>
+      <section class="panel view" aria-label="View options">
+        <p class="label">colour by</p>
+        <div class="segmented" id="color-modes" role="radiogroup" aria-label="Colour by">
+          <button type="button" role="radio" aria-checked="true" data-color="project" title="One colour per project">project</button>
+          <button type="button" role="radio" aria-checked="false" data-color="time" title="Dark is older, light is newer">time</button>
+          <button type="button" role="radio" aria-checked="false" data-color="speaker" title="What you typed against what the assistant said">speaker</button>
+        </div>
+        <div id="mode-key" class="mode-key"></div>
+        <p class="label">show</p>
+        <div class="toggles">
+          <button id="toggle-labels" type="button" class="ghost" aria-pressed="true" title="Names for regions, from their most distinctive words">labels</button>
+          <button id="toggle-dust" type="button" class="ghost" aria-pressed="true" title="One small point per sentence around each chunk">dust</button>
+          <button id="toggle-glow" type="button" class="ghost" aria-pressed="true" title="Bloom around bright points">glow</button>
+          <button id="toggle-depth" type="button" class="ghost" aria-pressed="true" title="Blur points away from the focal distance">depth</button>
+        </div>
+      </section>
+      <p id="hint" class="tip">drag to orbit · scroll to zoom · click a point · / to search · esc to clear</p>
+    </div>
+
+    <section id="results" class="panel results" aria-live="polite" hidden>
+      <div class="results-head">
+        <p id="results-stats" class="muted"></p>
+        <button id="clear" type="button" class="ghost">clear</button>
+      </div>
+      <ol id="results-list"></ol>
+    </section>
+
+    <section id="repeats" class="panel results repeats" aria-live="polite" hidden>
+      <div class="results-head">
+        <p id="repeats-stats" class="muted"></p>
+        <button id="repeats-close" type="button" class="ghost">close</button>
+      </div>
+      <ol id="repeats-list"></ol>
+    </section>
+
+    <aside id="detail" class="panel detail" hidden>
+      <div class="detail-head">
+        <p id="detail-meta" class="muted"></p>
+        <button id="detail-close" type="button" class="ghost" aria-label="Close">close</button>
+      </div>
+      <p id="detail-session" class="detail-session"></p>
+      <pre id="detail-text"></pre>
+      <p class="label">nearest in the index</p>
+      <ul id="detail-neighbours"></ul>
+    </aside>
+
+    <div id="tooltip" class="tooltip" hidden></div>
+    <div id="activity-tip" class="tooltip chart-tip" hidden></div>
+
+    <footer class="timeline">
+      <div class="activity">
+        <canvas id="activity" role="img" aria-label="Chunks per week over time. The same numbers follow as a table."></canvas>
+        <div id="activity-table" class="sr-only"></div>
+      </div>
+      <div class="timeline-row">
+        <button id="play" type="button" class="ghost" aria-label="Play the corpus growing over time">play</button>
+        <label class="sr-only" for="scrub">Show history up to</label>
+        <input id="scrub" type="range" min="0" max="1000" value="1000" step="1" />
+        <output id="scrub-date" for="scrub" class="muted"></output>
+      </div>
+    </footer>
+
+    <section id="gesture" class="gesture">
+      <button id="gesture-toggle" type="button" class="ghost" aria-pressed="false">hand control: off</button>
+      <div id="gesture-view" hidden>
+        <video id="gesture-video" playsinline muted></video>
+        <canvas id="gesture-overlay" width="200" height="150"></canvas>
+        <p id="gesture-label" class="muted">show a hand</p>
+      </div>
+    </section>
+
+    <div id="intro" class="intro" role="dialog" aria-modal="true" aria-labelledby="intro-title" hidden>
+      <div class="intro-card">
+        <p class="intro-kicker">public demo · invented data</p>
+        <h2 id="intro-title">A map of how you work with AI</h2>
+        <p>
+          LOCI indexes your own AI coding history on your own machine, lets you search it by meaning, and shows what you keep having to
+          repeat to your assistant.
+        </p>
+        <p>
+          Each point here is one message, and messages that mean similar things sit together. This page runs the real search index in your
+          browser, on made-up conversations about six made-up projects. Nothing you type leaves the page.
+        </p>
+        <p class="label">three things to try</p>
+        <div class="intro-actions">
+          <button type="button" class="ghost" data-try="search" data-query="sourdough starter hydration">
+            <span class="try-name">Search by meaning</span>
+            <span class="try-note">and watch the path the index takes to the answer</span>
+          </button>
+          <button type="button" class="ghost" data-try="repeats">
+            <span class="try-name">What keeps getting repeated</span>
+            <span class="try-note">instructions said in many separate sessions</span>
+          </button>
+          <button type="button" class="ghost" data-try="play">
+            <span class="try-name">Play the history</span>
+            <span class="try-note">nine months of work, building up week by week</span>
+          </button>
+        </div>
+        <div class="intro-foot">
+          <button id="intro-close" type="button" class="primary">Explore the map</button>
+          <a href="https://github.com/ethan-goldstein/loci" target="_blank" rel="noopener noreferrer">Source and measured results on GitHub</a>
+        </div>
+      </div>
+    </div>
+
+    <div id="fatal" class="fatal" hidden></div>
+
+    <script type="module" src="./main.ts"></script>
+  </body>
+</html>
