@@ -1,6 +1,7 @@
 :root {
   --bg: #05070b;
-  --panel: rgba(10, 14, 21, 0.72);
+  /* Mostly opaque: points and region labels behind a panel must not compete with its text. */
+  --panel: rgba(10, 14, 21, 0.88);
   --line: rgba(160, 185, 220, 0.16);
   --line-strong: rgba(160, 185, 220, 0.34);
   --text: #dfe7f2;

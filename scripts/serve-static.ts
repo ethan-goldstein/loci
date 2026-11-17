@@ -43,7 +43,7 @@ const server = http.createServer((req, res) => {
   } catch {
     return send(400, 'text/plain', 'Bad path');
   }
-  if (pathname === '/') {
+  if (pathname === '/' && prefix !== '/') {
     res.writeHead(302, { location: prefix });
     return res.end();
   }
