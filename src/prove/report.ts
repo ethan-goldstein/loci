@@ -1,4 +1,5 @@
 import type { AbReport, Arm, View } from './ab.ts';
+import type { ProfileReport } from '../insight/profile.ts';
 import type { RepeatsReport } from '../insight/repeats.ts';
 import type { BenchReport, IndexBench } from './bench.ts';
 import type { Interval } from './bootstrap.ts';
@@ -28,6 +29,32 @@ function indexTable(b: IndexBench): string {
   for (const s of b.sweep) {
     lines.push(`| ${s.ef} | ${f(s.recall10, 4)} | ${f(s.p50Ms, 3)} | ${f(s.p95Ms, 3)} | ${Math.round(s.qps).toLocaleString('en-US')} | ${f(b.exactP50Ms / s.p50Ms, 1)}x |`);
   }
+  if (b.kernels) lines.push('', kernelTable(b.kernels));
+  return lines.join('\n');
+}
+
+/** The TypeScript inner loop against the WebAssembly SIMD one, side by side. */
+function kernelTable(k: NonNullable<IndexBench['kernels']>): string {
+  const js = k.rows.find((r) => r.name === 'js');
+  const simd = k.rows.find((r) => r.name !== 'js');
+  if (!js || !simd) return '';
+  const times = (a: number, b: number) => (b > 0 ? `${f(a / b, 2)}x` : 'n/a');
+  const lines = [
+    `Inner loop, TypeScript against WebAssembly SIMD: the same index and queries, ${k.rounds} rounds of each, interleaved, median round shown.`,
+    '',
+    '| | TypeScript p50 ms | WebAssembly SIMD p50 ms | faster by | recall@10 (TypeScript / SIMD) |',
+    '|---|---:|---:|---:|---:|',
+    `| exact scan | ${f(js.exactP50Ms, 3)} | ${f(simd.exactP50Ms, 3)} | ${times(js.exactP50Ms, simd.exactP50Ms)} | exact / exact |`,
+  ];
+  js.sweep.forEach((row, i) => {
+    const other = simd.sweep[i];
+    if (!other) return;
+    lines.push(`| graph, ef ${row.ef} | ${f(row.p50Ms, 3)} | ${f(other.p50Ms, 3)} | ${times(row.p50Ms, other.p50Ms)} | ${f(row.recall10, 4)} / ${f(other.recall10, 4)} |`);
+  });
+  lines.push(
+    '',
+    `The two loops add in a different order and at different precision, so they are compared rather than assumed equal: the exact top 10 is the same list for ${(k.exactTop10Agreement * 100).toFixed(1)}% of queries, and the largest difference in any similarity is ${k.maxAbsDiff.toExponential(1)}.`,
+  );
   return lines.join('\n');
 }
 
@@ -68,14 +95,20 @@ function diversitySection(ev: EvalReport): string[] {
   const foldRep = rep('hybrid+fold');
   const plainRep = rep('hybrid');
   if (hybrid && fold && foldRep && plainRep) {
+    const delta = (x: number) => (Math.abs(x) < 0.0005 ? '0.000' : `${x > 0 ? '+' : ''}${f(x)}`);
     const dp = fold.precision.value - hybrid.precision.value;
     const dm = fold.mrr.value - hybrid.mrr.value;
     lines.push(
       '',
-      `**What it costs and buys.** Folding changes project-precision@10 by ${dp >= 0 ? '+' : ''}${f(dp)} and MRR by ${dm >= 0 ? '+' : ''}${f(dm)} against plain hybrid (point estimates on the same queries), and takes near-copy pairs in the top 10 from ${plainRep.dupPairs.toFixed(2)} to ${foldRep.dupPairs.toFixed(2)} per query. The same-project label can only price diversity, never reward it: a different chunk from the same project scores exactly what the copy it replaced did. So this table shows what folding costs on this measure and how much repetition it removes. It does not show that the result list is more useful.`,
+      `**What it costs and buys.** Folding changes project-precision@10 by ${delta(dp)} and MRR by ${delta(dm)} against plain hybrid (point estimates on the same queries), and takes near-copy pairs in the top 10 from ${plainRep.dupPairs.toFixed(2)} to ${foldRep.dupPairs.toFixed(2)} per query. The same-project label can only price diversity, never reward it: a different chunk from the same project scores exactly what the copy it replaced did. So this table shows what folding costs on this measure and how much repetition it removes. It does not show that the result list is more useful.`,
     );
   }
-  lines.push('', 'Folding is on by default in the viewer, the command line and the MCP tool. Every other number in this file is from the plain ranking.', '');
+  const rare = plainRep && plainRep.dupPairs < 1;
+  lines.push(
+    '',
+    `Folding is on by default in the viewer, the command line and the MCP tool. ${rare ? 'On this corpus near-copies are rare, so that default changes little either way: keeping it on is a judgement, not something this table decides. ' : ''}Every other number in this file is from the plain ranking.`,
+    '',
+  );
   return lines;
 }
 
@@ -235,6 +268,40 @@ function abSection(ab: AbReport): string[] {
 }
 
 /** Numbers only: how much of what was typed is a repeat. The sentences themselves stay private. */
+/** Coarse numbers only. When someone works, hour by hour, is personal and stays in the private viewer. */
+function profileSection(p: ProfileReport): string[] {
+  const n = (x: number) => x.toLocaleString('en-US');
+  const t = p.totals;
+  const perWeek = p.weekly.map((w) => w.projects).sort((a, b) => a - b);
+  const medianProjects = perWeek[Math.floor(perWeek.length / 2)] ?? 0;
+  const out = [
+    '## 5. Where do the sessions go?',
+    '',
+    `Counted from timestamps alone: no text is read and no project is named. "Active time" is the sum of the gaps between consecutive messages in a session, leaving out any gap longer than ${p.idleMinutes} minutes.`,
+    '',
+    `- ${n(t.sessions)} sessions on ${n(t.activeDays)} days across ${n(t.weeks)} weeks, in ${n(t.projects)} projects.`,
+    `- ${n(t.prompts)} prompts typed, and about ${n(Math.round(t.activeHours))} hours of active time. A long prompt stored as several chunks is counted once, and prompts written by programs are left out, so this is lower than the count of prompt chunks in section 4.`,
+    `- A typical session is ${p.perSession.prompts.median} prompts and ${p.perSession.activeMinutes.median} minutes. One in ten runs past ${p.perSession.prompts.p90} prompts or ${p.perSession.activeMinutes.p90} minutes. The longest had ${p.perSession.prompts.max} prompts.`,
+    `- The busiest project holds ${f(p.concentration.topShare * 100, 0)}% of everything and the busiest three hold ${f(p.concentration.top3Share * 100, 0)}%. A typical week touches ${medianProjects} project${medianProjects === 1 ? '' : 's'}.`,
+    `- The idle cut-off matters: ${p.sensitivity.map((x) => `${x.idleMinutes} minutes gives ${n(Math.round(x.activeHours))} hours`).join(', ')}.`,
+    '',
+    '| prompts in a session | sessions |',
+    '|---|---:|',
+    ...p.promptsHistogram.map((b) => `| ${b.label} | ${n(b.sessions)} |`),
+    '',
+  ];
+  if (p.saidBefore) {
+    const sentences = p.saidBefore.reduce((a, w) => a + w.sentences, 0);
+    const again = p.saidBefore.reduce((a, w) => a + w.saidBefore, 0);
+    if (sentences > 0) out.push(`Across the whole period ${f((again / sentences) * 100, 1)}% of typed sentences repeated something said in an earlier, different session within the eight weeks before. This looks only backwards, so recent weeks are counted the same way as old ones.`, '');
+  }
+  out.push(
+    'What this does not show: what any of that time produced, or whether it was well spent. Session boundaries are the assistant\'s, not a measure of attention, and active time is an estimate that moves with the cut-off above. The hour-by-weekday pattern is in the local viewer and is deliberately left out of this file.',
+    '',
+  );
+  return out;
+}
+
 function repeatsSection(r: RepeatsReport): string[] {
   const n = (x: number) => x.toLocaleString('en-US');
   const out = [
@@ -258,7 +325,7 @@ function repeatsSection(r: RepeatsReport): string[] {
   return out;
 }
 
-export function renderResults(bench: BenchReport | null, ev: EvalReport | null, generated: string, ab: AbReport | null = null, repeats: RepeatsReport | null = null): string {
+export function renderResults(bench: BenchReport | null, ev: EvalReport | null, generated: string, ab: AbReport | null = null, repeats: RepeatsReport | null = null, profile: ProfileReport | null = null): string {
   const out: string[] = [
     '# LOCI results',
     '',
@@ -273,7 +340,7 @@ export function renderResults(bench: BenchReport | null, ev: EvalReport | null, 
     out.push(
       '## 1. Is the index correct, and how fast is it?',
       '',
-      `Machine: ${bench.machine.cpu}, ${bench.machine.cores} cores, ${bench.machine.memoryGb} GB, Node ${bench.machine.node}, ${bench.machine.platform}. Single thread, no SIMD, no native code.`,
+      `Machine: ${bench.machine.cpu}, ${bench.machine.cores} cores, ${bench.machine.memoryGb} GB, Node ${bench.machine.node}, ${bench.machine.platform}. Single thread, no native code. The tables below are the TypeScript inner loop${bench.real.kernels ? '; the WebAssembly SIMD loop is measured against it under each' : ', with no SIMD'}.`,
       '',
       `HNSW parameters: M = ${bench.params.M}, M0 = ${bench.params.M0}, efConstruction = ${bench.params.efConstruction}. Recall is the share of the true 10 nearest neighbours (found by scanning every vector) that the graph returns.`,
       '',
@@ -424,5 +491,6 @@ export function renderResults(bench: BenchReport | null, ev: EvalReport | null, 
   }
   // Placed after the caveats of the sections above: it is a separate measurement with its own.
   if (repeats && repeats.sentences > 0) out.push(...repeatsSection(repeats));
+  if (profile && profile.totals.sessions > 0) out.push(...profileSection(profile));
   return out.join('\n');
 }

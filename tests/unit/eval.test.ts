@@ -182,5 +182,26 @@ describe('index benchmark', () => {
     const md = renderResults({ machine: { cpu: 'test', cores: 1, memoryGb: 1, node: 'v0', platform: 'x' }, params: { M: 16, M0: 32, efConstruction: 200, seed: 1 }, real: b, synthetic: null, bm25: { docs: 1, vocabulary: 1, buildMs: 1, p50Ms: 1, p95Ms: 1, ftsQueries: 1, ftsTop10Agreement: 1 }, rssMb: 1 }, null, 'x');
     expect(md).toContain('## 1. Is the index correct, and how fast is it?');
     expect(md).toContain('| 64 |');
+
+    // The same index searched with each inner loop, measured in interleaved rounds.
+    const k = b.kernels!;
+    expect(k).toBeTruthy();
+    expect(k.rows.map((r) => r.name)).toEqual(['js', 'wasm-simd']);
+    expect(k.rounds).toBeGreaterThanOrEqual(3);
+    expect(k.exactTop10Agreement).toBeGreaterThanOrEqual(0.95);
+    expect(k.maxAbsDiff).toBeLessThan(1e-5);
+    for (const row of k.rows) {
+      expect(row.exactP50Ms).toBeGreaterThan(0);
+      expect(row.sweep.map((x) => x.ef)).toEqual([16, 32, 64, 128, 256]);
+    }
+    // Whichever loop does the arithmetic, the graph finds the same neighbours to within a hair.
+    k.rows[0]!.sweep.forEach((x, i) => expect(Math.abs(x.recall10 - k.rows[1]!.sweep[i]!.recall10)).toBeLessThan(0.01));
+    expect(md).toContain('TypeScript against WebAssembly SIMD');
+    expect(md).toContain('| exact scan |');
+    expect(md).not.toContain('with no SIMD');
+    // A report written before the kernel existed still renders, and says so.
+    const old = renderResults({ machine: { cpu: 'test', cores: 1, memoryGb: 1, node: 'v0', platform: 'x' }, params: { M: 16, M0: 32, efConstruction: 200, seed: 1 }, real: { ...b, kernels: undefined }, synthetic: null, bm25: { docs: 1, vocabulary: 1, buildMs: 1, p50Ms: 1, p95Ms: 1, ftsQueries: 1, ftsTop10Agreement: 1 }, rssMb: 1 }, null, '2026-01-01');
+    expect(old).toContain('with no SIMD');
+    expect(old).not.toContain('WebAssembly SIMD p50');
   });
 });

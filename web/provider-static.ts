@@ -5,7 +5,7 @@ import { DIVERSIFY_DEFAULT, searchCore } from '../src/search/core.ts';
 import type { CorpusView } from '../src/search/core.ts';
 import { clip, shapeChunk, shapeSearch } from '../src/serve/shape.ts';
 import type { Describe } from '../src/serve/shape.ts';
-import type { ChunkResponse, Corpus, Manifest, Mode, RepeatsView, SearchResponse } from './api.ts';
+import type { ChunkResponse, Corpus, Manifest, Mode, ProfileView, RepeatsView, SearchResponse } from './api.ts';
 
 /**
  * The public demo's data source: the whole engine, running in the page.
@@ -150,6 +150,10 @@ export async function chunk(particle: number): Promise<ChunkResponse> {
   const { view, file, describe } = await engine();
   if (!Number.isInteger(particle) || particle < 0 || particle >= view.n) throw new Error('No such point');
   return shapeChunk(file.nodeAt[particle]!, view.hnsw, describe);
+}
+
+export async function profile(): Promise<ProfileView> {
+  return getJson<ProfileView>('profile.json');
 }
 
 export async function repeats(): Promise<RepeatsView> {

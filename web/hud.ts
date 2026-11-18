@@ -1,4 +1,5 @@
-import type { ChunkResponse, Manifest, Mode, RepeatItem, RepeatsView, SearchResponse } from './api.ts';
+import type { ChunkResponse, Manifest, Mode, ProfileView, RepeatItem, RepeatsView, SearchResponse } from './api.ts';
+import { renderProfile } from './Profile.ts';
 import { SLOTS, SPEAKER, TIME_GRADIENT, projectColor } from './palette.ts';
 import type { ColorMode } from './palette.ts';
 
@@ -21,6 +22,8 @@ export interface HudHandlers {
   onRepeats: (open: boolean) => void;
   /** One repeated thing was chosen: light up where it was said. */
   onRepeat: (item: RepeatItem) => void;
+  /** The profile panel was opened (true) or closed (false). */
+  onProfile: (open: boolean) => void;
 }
 
 export type ToggleName = 'labels' | 'dust' | 'glow' | 'depth';
@@ -137,6 +140,8 @@ export class Hud {
     el('detail-close').addEventListener('click', () => handlers.onCloseDetail());
     el('open-repeats').addEventListener('click', () => handlers.onRepeats(el('repeats').hidden));
     el('repeats-close').addEventListener('click', () => handlers.onRepeats(false));
+    el('open-profile').addEventListener('click', () => handlers.onProfile(el('profile').hidden));
+    el('profile-close').addEventListener('click', () => handlers.onProfile(false));
     this.scrub.addEventListener('input', () => handlers.onReveal(Number(this.scrub.value) / 1000));
     this.playButton.addEventListener('click', () => handlers.onPlay());
     this.buildLegend();
@@ -230,6 +235,7 @@ export class Hud {
 
   setBusy(text: string): void {
     this.hideRepeats();
+    this.hideProfile();
     this.results.hidden = false;
     this.resultsStats.textContent = text;
   }
@@ -261,8 +267,32 @@ export class Hud {
   }
 
   /** Shows the things said again and again, most widespread first. Text is the person's own. */
+  /** The "where the time goes" panel: figures and small charts, from counts only. */
+  showProfile(view: ProfileView): void {
+    this.results.hidden = true; // one right-hand panel at a time
+    this.hideRepeats();
+    el('profile').hidden = false;
+    el('open-profile').setAttribute('aria-pressed', 'true');
+    const body = el('profile-body');
+    if (!view.available || !view.profile) {
+      body.replaceChildren();
+      el('profile-stats').textContent = view.reason ?? 'Not available.';
+      return;
+    }
+    const t = view.profile.totals;
+    el('profile-stats').textContent = `${t.sessions.toLocaleString('en-US')} sessions · ${t.prompts.toLocaleString('en-US')} prompts · ${t.weeks} weeks · counts only, no text`;
+    renderProfile(body, el('profile-tip'), view.profile);
+  }
+
+  hideProfile(): void {
+    el('profile').hidden = true;
+    el('profile-tip').hidden = true;
+    el('open-profile').setAttribute('aria-pressed', 'false');
+  }
+
   showRepeats(view: RepeatsView): void {
     this.results.hidden = true; // one right-hand panel at a time
+    this.hideProfile();
     const panel = el('repeats');
     const list = el<HTMLOListElement>('repeats-list');
     panel.hidden = false;

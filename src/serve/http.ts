@@ -8,7 +8,9 @@ import { ollamaEmbedder } from '../embed/ollama.ts';
 import { Engine } from '../engine.ts';
 import type { Mode } from '../engine.ts';
 import { DIVERSIFY_DEFAULT } from '../search/core.ts';
-import { runRepeats } from '../insight/repeats.ts';
+import { runProfile } from '../insight/profile.ts';
+import type { ProfileReport } from '../insight/profile.ts';
+import { runRepeats, templatedPrompts } from '../insight/repeats.ts';
 import type { RepeatGroup, RepeatsReport } from '../insight/repeats.ts';
 import { buildDemoStore, hashEmbedder } from '../prove/demo.ts';
 import { buildViewerData } from './export.ts';
@@ -113,7 +115,20 @@ export function repeatsView(report: RepeatsReport | null, engine: Engine, data: 
   };
 }
 
-export function createHandler(engine: Engine, data: ViewerData, port: number, opts: ServerOptions & { repeats?: RepeatsView } = {}) {
+/** What the viewer needs of a profile: the report, or why there is none. */
+export interface ProfileView {
+  available: boolean;
+  reason?: string;
+  profile?: ProfileReport;
+}
+
+export function profileView(report: ProfileReport | null, engine: Engine): ProfileView {
+  if (!report) return { available: false, reason: 'Run `loci profile` to compute this.' };
+  if (report.corpus !== engine.n) return { available: false, reason: 'The store has changed since this was computed. Run `loci profile` again.' };
+  return { available: true, profile: report };
+}
+
+export function createHandler(engine: Engine, data: ViewerData, port: number, opts: ServerOptions & { repeats?: RepeatsView; profile?: ProfileView } = {}) {
   const hosts = new Set([`127.0.0.1:${port}`, `localhost:${port}`]);
   const origins = new Set([`http://127.0.0.1:${port}`, `http://localhost:${port}`, ...(opts.devOrigins ?? [])]);
   for (const o of opts.devOrigins ?? []) hosts.add(new URL(o).host);
@@ -172,6 +187,7 @@ export function createHandler(engine: Engine, data: ViewerData, port: number, op
       return json(shapeSearch(res, describe, data.rankOf, { ms: performance.now() - t0, mode: degraded ? 'bm25' : mode, degraded }));
     }
     if (route === 'repeats') return json(opts.repeats ?? { available: false, reason: 'Not computed.' });
+    if (route === 'profile') return json(opts.profile ?? { available: false, reason: 'Not computed.' });
     if (route === 'chunk') {
       const particle = intParam(q, 'particle', -1, 0, Math.max(0, engine.n - 1));
       if (particle < 0 || !q.has('particle')) throw new HttpError(400, 'particle is required');
@@ -270,8 +286,20 @@ export async function startServer(cfg: Config, opts: ServerOptions = {}): Promis
     }
   }
   const repeats = repeatsView(repeatsReport, engine, data);
+  // Profile: computed on the spot for the demo (in UTC, so it is the same everywhere); read from the private store otherwise.
+  let profileReport: ProfileReport | null = null;
+  if (opts.demo) profileReport = runProfile(engine, { timeZone: 'UTC', repeats: repeatsReport, notTyped: templatedPrompts(engine) });
+  else {
+    const file = path.join(cfg.home, 'profile.json');
+    try {
+      if (fs.existsSync(file)) profileReport = JSON.parse(fs.readFileSync(file, 'utf8')) as ProfileReport;
+    } catch {
+      profileReport = null; // unreadable: treated as not computed
+    }
+  }
+  const profile = profileView(profileReport, engine);
   const devOrigins = opts.devOrigins ?? ['http://127.0.0.1:4320', 'http://localhost:4320'];
-  const handler = createHandler(engine, data, cfg.port, { ...opts, devOrigins, repeats });
+  const handler = createHandler(engine, data, cfg.port, { ...opts, devOrigins, repeats, profile });
   const server = http.createServer((req, res) => void handler(req, res));
   server.requestTimeout = 30_000;
   server.headersTimeout = 10_000;

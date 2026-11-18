@@ -674,6 +674,123 @@ input[type='range']:focus-visible {
   font-size: 15px;
 }
 
+/* ---- search bar pills ---- */
+
+.pills {
+  display: flex;
+  flex-wrap: wrap;
+  justify-content: center;
+  gap: 8px;
+}
+
+/* ---- where the time goes ---- */
+
+.profile-body {
+  margin-top: 8px;
+  overflow-y: auto;
+}
+
+.profile .label {
+  margin: 14px 0 6px;
+}
+
+.tiles {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+}
+
+.tile {
+  padding: 8px 10px;
+  border: 1px solid var(--line);
+  border-radius: 6px;
+}
+
+.tile-value {
+  font: 600 19px/1.2 var(--sans);
+  color: var(--text);
+}
+
+.tile-label {
+  font: 11px/1.3 var(--mono);
+  color: var(--text);
+}
+
+.tile-note {
+  font: 11px/1.3 var(--mono);
+  color: var(--muted);
+}
+
+.chart {
+  display: block;
+  width: 100%;
+  height: auto;
+}
+
+.chart text {
+  font-family: var(--mono);
+}
+
+.chart rect:focus-visible,
+.chart circle:focus-visible,
+.bar:focus-visible {
+  outline: 1px solid var(--accent);
+  outline-offset: 1px;
+}
+
+.scale {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  margin-top: 4px;
+  font: 10px/1 var(--mono);
+  color: var(--muted);
+}
+
+.scale .swatch {
+  width: 11px;
+  height: 11px;
+  border-radius: 2px;
+}
+
+.bars {
+  display: grid;
+  gap: 3px;
+}
+
+.bar-row {
+  display: grid;
+  grid-template-columns: 74px 1fr 34px;
+  align-items: center;
+  gap: 8px;
+  font: 11px/1 var(--mono);
+}
+
+.bar-label {
+  color: var(--muted);
+}
+
+.bar-track {
+  height: 10px;
+}
+
+.bar {
+  height: 100%;
+  min-width: 2px;
+  border-radius: 0 4px 4px 0;
+}
+
+.bar-value {
+  color: var(--text);
+  text-align: right;
+}
+
+.profile .note {
+  margin: 8px 0 0;
+  font-size: 11px;
+  line-height: 1.45;
+}
+
 /* Panels that hold text to read sit over the map, so they are nearly opaque: labels and points
    behind them must not show through the words. */
 .results,

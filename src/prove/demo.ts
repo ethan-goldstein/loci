@@ -46,7 +46,18 @@ export async function buildDemoStore(dir: string, n = 6000, seed = 7, opts: Demo
   const vecFile = path.join(dir, `vectors.${modelTag(DEMO_MODEL)}.f32`);
   for (const f of [dbFile, `${dbFile}-wal`, `${dbFile}-shm`, vecFile, path.join(dir, `hnsw.${modelTag(DEMO_MODEL)}.bin`)]) fs.rmSync(f, { force: true });
 
-  const docs: (SynthDoc & { role?: 'human' | 'assistant' })[] = opts.prose ? proseDocs(n, seed, PLANTED) : syntheticDocs(n, seed);
+  const docs: (SynthDoc & { role?: 'human' | 'assistant'; session?: number })[] = opts.prose ? proseDocs(n, seed, PLANTED) : syntheticDocs(n, seed);
+  // Where a document says which session it belongs to, the session's span is the span of its documents.
+  const span = new Map<number, [first: number, last: number]>();
+  for (const d of docs) {
+    if (d.session === undefined) continue;
+    const sp = span.get(d.session);
+    if (!sp) span.set(d.session, [d.ts, d.ts]);
+    else {
+      sp[0] = Math.min(sp[0], d.ts);
+      sp[1] = Math.max(sp[1], d.ts);
+    }
+  }
   const store = new Store(dbFile);
   const embedder = hashEmbedder();
   const texts: string[] = [];
@@ -55,15 +66,18 @@ export async function buildDemoStore(dir: string, n = 6000, seed = 7, opts: Demo
     const sessionCount = new Map<string, number>();
     docs.forEach((d, i) => {
       const projectId = store.upsertProject(`demo-${d.topic}`, d.topic);
-      // Group each topic's documents into sessions of about 16 chunks.
-      let s = sessionOf.get(d.topic);
+      // Group each topic's documents into sessions of about 16 chunks, unless the documents
+      // already say which session they belong to (the readable demo text does).
+      const sessionKey = d.session === undefined ? d.topic : `s${d.session}`;
+      let s = sessionOf.get(sessionKey);
       if (!s || s.left === 0) {
         const k = (sessionCount.get(d.topic) ?? 0) + 1;
         sessionCount.set(d.topic, k);
         // Titled from the session's own opening words, the way a real title summarises a real session.
         const opening = [...new Set(tokenize(d.text).filter((t) => !FILLER.has(t)))].slice(0, 4).join(' ');
-        s = { pk: store.upsertSession(`demo-${d.topic}-${k}`, projectId, opening || `${d.topic} notes ${k}`, d.ts, d.ts), left: 16 };
-        sessionOf.set(d.topic, s);
+        const [first, last] = d.session === undefined ? [d.ts, d.ts] : span.get(d.session)!;
+        s = { pk: store.upsertSession(`demo-${d.topic}-${k}`, projectId, opening || `${d.topic} notes ${k}`, first, last), left: d.session === undefined ? 16 : Infinity };
+        sessionOf.set(sessionKey, s);
       }
       s.left--;
       const role = d.role ?? (i % 3 === 0 ? 'human' : 'assistant');

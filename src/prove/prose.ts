@@ -175,6 +175,69 @@ const cap = (s: string) => s.charAt(0).toUpperCase() + s.slice(1);
 
 export interface ProseDoc extends SynthDoc {
   role: 'human' | 'assistant';
+  /** Which sitting this belongs to. Documents of one session are minutes apart; sessions are hours or days apart. */
+  session: number;
+}
+
+/** How many documents make a session. */
+const SESSION_DOCS = 16;
+const MIN = 60_000;
+const HOUR = 3_600_000;
+const DAY = 86_400_000;
+
+/**
+ * Gives the documents a believable rhythm, in place.
+ *
+ * Each project's documents, in order, are cut into sessions. Sessions are then laid on a calendar
+ * the way work actually falls: one to three on a weekday, fewer at weekends, starting in the late
+ * morning, the afternoon or the evening and never in the small hours, with messages a few minutes
+ * apart and the odd longer pause. Without this every message would sit exactly an hour after the
+ * last, around the clock, and a profile of the demo would show nothing.
+ *
+ * It draws from its own random stream, so the text of the documents does not depend on it.
+ */
+function schedule(docs: ProseDoc[], seed: number): void {
+  const rand = rng((seed ^ 0x5c4ed) >>> 0);
+  const open = new Map<string, { id: number; left: number }>();
+  const sessions: number[][] = [];
+  docs.forEach((d, i) => {
+    let s = open.get(d.topic);
+    if (!s || s.left === 0) {
+      s = { id: sessions.length, left: SESSION_DOCS };
+      sessions.push([]);
+      open.set(d.topic, s);
+    }
+    s.left--;
+    d.session = s.id;
+    sessions[s.id]!.push(i);
+  });
+
+  // Hours a session may start at (UTC), weighted towards the afternoon and the evening.
+  const STARTS = [9, 10, 10, 11, 11, 13, 14, 14, 15, 15, 16, 16, 19, 20, 20, 21, 21, 21, 22, 22];
+  const WEEKDAY = [1, 1, 2, 2, 2, 3];
+  const WEEKEND = [0, 0, 0, 1, 1];
+  let day = Date.UTC(2026, 0, 5); // a Monday
+  let next = 0;
+  while (next < sessions.length) {
+    const weekday = new Date(day).getUTCDay();
+    const plan = weekday === 0 || weekday === 6 ? WEEKEND : WEEKDAY;
+    const count = plan[Math.floor(rand() * plan.length)]!;
+    const starts = Array.from({ length: count }, () => STARTS[Math.floor(rand() * STARTS.length)]! * HOUR + Math.floor(rand() * 50) * MIN).sort((a, b) => a - b);
+    let free = 0; // when the previous session of the day ended
+    for (const at of starts) {
+      if (next >= sessions.length) break;
+      let t = day + Math.max(at, free + 10 * MIN);
+      for (const i of sessions[next]!) {
+        docs[i]!.ts = t;
+        const pause = rand();
+        // Mostly a minute or three; now and then a think; rarely a break long enough to count as away.
+        t += pause < 0.86 ? 40_000 + rand() * 170_000 : pause < 0.97 ? 6 * MIN + rand() * 14 * MIN : 35 * MIN + rand() * 20 * MIN;
+      }
+      free = t - day;
+      next++;
+    }
+    day += DAY;
+  }
 }
 
 /**
@@ -374,7 +437,8 @@ export function proseDocs(n: number, seed: number, planted: readonly string[] = 
     } else {
       text = reply(p);
     }
-    out.push({ topic, text, ts: start + i * 3_600_000, role });
+    out.push({ topic, text, ts: start + i * 3_600_000, role, session: 0 });
   }
+  schedule(out, seed);
   return out;
 }

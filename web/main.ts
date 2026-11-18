@@ -6,8 +6,8 @@ import { UnrealBloomPass } from 'three/examples/jsm/postprocessing/UnrealBloomPa
 import { Activity } from './Activity.ts';
 import '@fontsource-variable/space-grotesk/wght.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
-import { STATIC, chunk, loadCorpus, repeats, search } from './api.ts';
-import type { Corpus, Mode, RepeatsView } from './api.ts';
+import { STATIC, chunk, loadCorpus, profile, repeats, search } from './api.ts';
+import type { Corpus, Mode, ProfileView, RepeatsView } from './api.ts';
 import { Cloud } from './Cloud.ts';
 import { Hud } from './hud.ts';
 import { setupIntro } from './intro.ts';
@@ -211,6 +211,7 @@ async function start(): Promise<void> {
   let activity: Activity | null = null;
   let labelsStale = true;
   let repeatsCache: RepeatsView | null = null;
+  let profileCache: ProfileView | null = null;
 
   const hud = new Hud(manifest, {
     onSearch: (q, mode) => void runSearch(q, mode),
@@ -248,6 +249,24 @@ async function start(): Promise<void> {
           canvas.dataset.repeats = String(repeatsCache.items?.length ?? 0);
         } catch (err) {
           hud.showRepeats({ available: false, reason: err instanceof Error ? err.message : 'Could not load repeats.' });
+        }
+      })();
+    },
+    onProfile: (open) => {
+      if (!open) {
+        hud.hideProfile();
+        return;
+      }
+      clearSearch();
+      cloud.setGlow([], false);
+      canvas.dataset.repeat = '0';
+      void (async () => {
+        try {
+          profileCache ??= await profile();
+          hud.showProfile(profileCache);
+          canvas.dataset.profile = profileCache.available ? '1' : '0';
+        } catch (err) {
+          hud.showProfile({ available: false, reason: err instanceof Error ? err.message : 'Could not load the profile.' });
         }
       })();
     },
@@ -357,6 +376,7 @@ async function start(): Promise<void> {
     } else if (e.key === 'Escape') {
       clearSearch();
       hud.hideRepeats();
+      hud.hideProfile();
       cloud.selected = -1;
       hud.hideDetail();
       (document.activeElement as HTMLElement | null)?.blur();

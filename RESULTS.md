@@ -1,54 +1,80 @@
 # LOCI results
 
-Generated 2026-11-17 by `loci bench`, `loci eval`, `loci ab`, `loci repeats` and `loci report`. Every number below is measured on this machine; re-run the commands to reproduce.
+Generated 2026-11-18 by `loci bench`, `loci eval`, `loci ab`, `loci repeats` and `loci report`. Every number below is measured on this machine; re-run the commands to reproduce.
 
 Nothing here contains conversation text. Projects are labelled by size (P1 is the largest), never by name.
 
 ## 1. Is the index correct, and how fast is it?
 
-Machine: Apple M5, 10 cores, 24 GB, Node v26.7.0, darwin-arm64. Single thread, no SIMD, no native code.
+Machine: Apple M5, 10 cores, 24 GB, Node v26.7.0, darwin-arm64. Single thread, no native code. The tables below are the TypeScript inner loop; the WebAssembly SIMD loop is measured against it under each.
 
 HNSW parameters: M = 16, M0 = 32, efConstruction = 200. Recall is the share of the true 10 nearest neighbours (found by scanning every vector) that the graph returns.
 
 **real corpus**: 7,692 vectors, 768 dimensions, 500 queries.
 
-- Build: 8.6 s. Graph: 1.0 MB on top of 22.5 MB of vectors.
+- Build: 8.2 s. Graph: 1.0 MB on top of 22.5 MB of vectors.
 - Mean layer-0 degree 18.3, top layer 3.
-- Exact scan (the oracle): p50 3.95 ms, p95 4.51 ms.
+- Exact scan (the oracle): p50 3.55 ms, p95 3.94 ms.
 
 | ef | recall@10 vs exact | p50 ms | p95 ms | queries/s | speed-up vs exact |
 |---:|---:|---:|---:|---:|---:|
-| 16 | 0.9010 | 0.221 | 0.316 | 4,457 | 17.9x |
-| 32 | 0.9526 | 0.386 | 0.522 | 2,563 | 10.2x |
-| 64 | 0.9814 | 0.673 | 0.930 | 1,459 | 5.9x |
-| 128 | 0.9956 | 1.257 | 1.619 | 801 | 3.1x |
-| 256 | 0.9990 | 2.179 | 2.725 | 462 | 1.8x |
+| 16 | 0.9010 | 0.184 | 0.254 | 5,410 | 19.2x |
+| 32 | 0.9526 | 0.294 | 0.382 | 3,427 | 12.1x |
+| 64 | 0.9814 | 0.496 | 0.616 | 2,029 | 7.2x |
+| 128 | 0.9956 | 0.858 | 1.038 | 1,187 | 4.1x |
+| 256 | 0.9990 | 1.396 | 1.633 | 724 | 2.5x |
 
-On the real corpus at ef = 64 the graph returns 98.1% of the true top 10 in 0.67 ms.
+Inner loop, TypeScript against WebAssembly SIMD: the same index and queries, 5 rounds of each, interleaved, median round shown.
+
+| | TypeScript p50 ms | WebAssembly SIMD p50 ms | faster by | recall@10 (TypeScript / SIMD) |
+|---|---:|---:|---:|---:|
+| exact scan | 3.830 | 0.334 | 11.46x | exact / exact |
+| graph, ef 16 | 0.189 | 0.029 | 6.61x | 0.9010 / 0.9010 |
+| graph, ef 32 | 0.307 | 0.048 | 6.44x | 0.9526 / 0.9526 |
+| graph, ef 64 | 0.527 | 0.083 | 6.38x | 0.9814 / 0.9814 |
+| graph, ef 128 | 0.901 | 0.142 | 6.33x | 0.9956 / 0.9956 |
+| graph, ef 256 | 1.410 | 0.245 | 5.75x | 0.9990 / 0.9990 |
+
+The two loops add in a different order and at different precision, so they are compared rather than assumed equal: the exact top 10 is the same list for 100.0% of queries, and the largest difference in any similarity is 1.3e-7.
+
+On the real corpus at ef = 64 the graph returns 98.1% of the true top 10 in 0.50 ms.
 
 The real corpus is small, so the same code is also measured on a larger synthetic set. These vectors are random clusters, not text: they show how the index scales, not how it behaves on language.
 
 **synthetic (64 Gaussian clusters)**: 50,000 vectors, 128 dimensions, 500 queries.
 
-- Build: 11.6 s. Graph: 6.4 MB on top of 24.4 MB of vectors.
+- Build: 9.3 s. Graph: 6.4 MB on top of 24.4 MB of vectors.
 - Mean layer-0 degree 18.5, top layer 3.
-- Exact scan (the oracle): p50 4.62 ms, p95 5.24 ms.
+- Exact scan (the oracle): p50 4.34 ms, p95 4.78 ms.
 
 | ef | recall@10 vs exact | p50 ms | p95 ms | queries/s | speed-up vs exact |
 |---:|---:|---:|---:|---:|---:|
-| 16 | 0.8158 | 0.057 | 0.078 | 16,945 | 81.1x |
-| 32 | 0.9386 | 0.083 | 0.106 | 11,718 | 55.8x |
-| 64 | 0.9916 | 0.121 | 0.154 | 8,121 | 38.3x |
-| 128 | 0.9996 | 0.168 | 0.201 | 6,051 | 27.5x |
-| 256 | 1.0000 | 0.222 | 0.309 | 4,442 | 20.8x |
+| 16 | 0.8158 | 0.055 | 0.072 | 17,793 | 79.2x |
+| 32 | 0.9386 | 0.073 | 0.088 | 13,477 | 59.8x |
+| 64 | 0.9916 | 0.105 | 0.132 | 9,208 | 41.3x |
+| 128 | 0.9996 | 0.137 | 0.172 | 7,049 | 31.7x |
+| 256 | 1.0000 | 0.182 | 0.221 | 5,390 | 23.8x |
+
+Inner loop, TypeScript against WebAssembly SIMD: the same index and queries, 5 rounds of each, interleaved, median round shown.
+
+| | TypeScript p50 ms | WebAssembly SIMD p50 ms | faster by | recall@10 (TypeScript / SIMD) |
+|---|---:|---:|---:|---:|
+| exact scan | 4.182 | 0.507 | 8.25x | exact / exact |
+| graph, ef 16 | 0.053 | 0.019 | 2.84x | 0.8158 / 0.8158 |
+| graph, ef 32 | 0.070 | 0.028 | 2.52x | 0.9386 / 0.9386 |
+| graph, ef 64 | 0.099 | 0.044 | 2.25x | 0.9916 / 0.9916 |
+| graph, ef 128 | 0.136 | 0.069 | 1.97x | 0.9996 / 0.9996 |
+| graph, ef 256 | 0.170 | 0.107 | 1.59x | 1.0000 / 1.0000 |
+
+The two loops add in a different order and at different precision, so they are compared rather than assumed equal: the exact top 10 is the same list for 100.0% of queries, and the largest difference in any similarity is 1.2e-7.
 
 ### Lexical index against SQLite FTS5
 
 The from-scratch BM25 uses the same formula and tokeniser as SQLite FTS5, so FTS5 serves as its oracle. Over 500 real prompts, 100.00% of its top-10 results match FTS5's top 10 (ties at the cut-off counted as matches).
 
-- 7,692 documents, 20,729 distinct terms, built in 142 ms.
-- Query latency: p50 0.224 ms, p95 0.567 ms.
-- Process memory with everything loaded: 294 MB.
+- 7,692 documents, 20,729 distinct terms, built in 118 ms.
+- Query latency: p50 0.192 ms, p95 0.495 ms.
+- Process memory with everything loaded: 232 MB.
 
 ## 2. Does retrieval find the right earlier work?
 
@@ -132,6 +158,23 @@ Each session has a short title that is never indexed. Using only the title as th
 | dense | 0.662 | 0.865 | 0.734 |
 | hybrid | 0.649 | 0.851 | 0.717 |
 | random (expected) | | 0.114 | |
+
+### Folding near-copies (exploratory)
+
+A history is full of near-copies: the same explanation given in three sessions, the same error pasted twice. A ranker scores each on its own, so they arrive together and push everything else off the page. Two rankings derived from hybrid deal with that. They were added after the results above were first seen, so read this part as exploratory.
+
+- **fold** skips a result that is a near-copy of one already shown and reorders nothing else. "Near-copy" means a similarity of 0.925 or more, a threshold set from the corpus itself (five robust spreads above a typical unrelated pair), not picked by hand.
+- **spread** also trades rank for variety (maximal marginal relevance, strength 0.5, fixed before it was run on this corpus).
+
+| ranking | project-precision@10 | MRR | mean similarity among the top 10 | near-copy pairs in the top 10 (of 45) | of the plain top 10, replaced |
+|---|---:|---:|---:|---:|---:|
+| hybrid | 0.368 [0.332, 0.390] | 0.541 [0.482, 0.565] | 0.712 | 0.25 |  |
+| hybrid+fold | 0.355 [0.322, 0.373] | 0.541 [0.482, 0.565] | 0.709 | 0.00 | 0.17 |
+| hybrid+spread | 0.331 [0.303, 0.347] | 0.549 [0.489, 0.574] | 0.685 | 0.00 | 1.75 |
+
+**What it costs and buys.** Folding changes project-precision@10 by -0.013 and MRR by 0.000 against plain hybrid (point estimates on the same queries), and takes near-copy pairs in the top 10 from 0.25 to 0.00 per query. The same-project label can only price diversity, never reward it: a different chunk from the same project scores exactly what the copy it replaced did. So this table shows what folding costs on this measure and how much repetition it removes. It does not show that the result list is more useful.
+
+Folding is on by default in the viewer, the command line and the MCP tool. On this corpus near-copies are rare, so that default changes little either way: keeping it on is a judgement, not something this table decides. Every other number in this file is from the plain ranking.
 
 ## 3. Does recalled context make an agent's answers better?
 
@@ -231,3 +274,26 @@ Every prompt typed by hand is split into sentences; pasted code, logs and conten
 | 12 or more | 1 |
 
 What this does not show: that a repeated instruction was needed each time, or that writing it down once as a standing rule would have saved the repetition. The kind labels (instruction, task, question) come from simple word patterns, not from reading for meaning. The chance figure assumes a normal curve, which real similarities only roughly follow, so read it as "far more than chance", not as an exact rate.
+
+## 5. Where do the sessions go?
+
+Counted from timestamps alone: no text is read and no project is named. "Active time" is the sum of the gaps between consecutive messages in a session, leaving out any gap longer than 30 minutes.
+
+- 97 sessions on 100 days across 22 weeks, in 15 projects.
+- 1,143 prompts typed, and about 158 hours of active time. A long prompt stored as several chunks is counted once, and prompts written by programs are left out, so this is lower than the count of prompt chunks in section 4.
+- A typical session is 6 prompts and 36 minutes. One in ten runs past 26 prompts or 268 minutes. The longest had 138 prompts.
+- The busiest project holds 49% of everything and the busiest three hold 75%. A typical week touches 2 projects.
+- The idle cut-off matters: 15 minutes gives 92 hours, 30 minutes gives 158 hours, 60 minutes gives 218 hours.
+
+| prompts in a session | sessions |
+|---|---:|
+| 1 | 20 |
+| 2 to 3 | 9 |
+| 4 to 7 | 16 |
+| 8 to 15 | 19 |
+| 16 to 31 | 15 |
+| 32 or more | 6 |
+
+Across the whole period 13.9% of typed sentences repeated something said in an earlier, different session within the eight weeks before. This looks only backwards, so recent weeks are counted the same way as old ones.
+
+What this does not show: what any of that time produced, or whether it was well spent. Session boundaries are the assistant's, not a measure of attention, and active time is an estimate that moves with the cut-off above. The hour-by-weekday pattern is in the local viewer and is deliberately left out of this file.

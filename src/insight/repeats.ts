@@ -4,6 +4,7 @@ import { dot } from '../index/hnsw.ts';
 import { calibrate } from '../index/simstats.ts';
 import type { Threshold } from '../index/simstats.ts';
 import { tokenize } from '../index/tokenize.ts';
+import { weekStart } from './profile.ts';
 
 /**
  * Repeat-finder: which things do you keep telling your assistant, session after session?
@@ -75,7 +76,17 @@ export interface RepeatsReport {
   /** How many groups span exactly this many sessions (the last bucket is "this many or more"). */
   spread: { sessions: number; groups: number }[];
   top: RepeatGroup[];
+  /**
+   * Per week (Monday 00:00 UTC): how many sentences were typed, and how many of them repeat
+   * something said in an earlier, different session within the eight weeks before. Looking only
+   * backwards keeps recent weeks comparable with old ones: a phrase does not need a future to
+   * count. Absent from reports written before this was added.
+   */
+  weekly?: { t: number; sentences: number; saidBefore: number }[];
 }
+
+/** How far back "said before" looks. */
+export const SAID_BEFORE_DAYS = 56;
 
 export interface Sentence {
   node: number;
@@ -354,6 +365,19 @@ export async function runRepeats(engine: Engine, opts: RepeatsOptions): Promise<
 
   const byKind: Record<Kind, number> = { instruction: 0, task: 0, question: 0, statement: 0 };
   for (const g of groups) byKind[g.kind]++;
+
+  // The weekly series: for each sentence, was the same thing said in an earlier session recently?
+  const tsOf = (i: number) => engine.ts[sentences[i]!.node]!;
+  const weeks = new Map<number, { sentences: number; saidBefore: number }>();
+  for (let i = 0; i < n; i++) {
+    const t = tsOf(i);
+    const key = weekStart(t);
+    const w = weeks.get(key) ?? { sentences: 0, saidBefore: 0 };
+    w.sentences++;
+    if (adjacency[i]!.some((j) => sessionOf[j] !== sessionOf[i] && tsOf(j) < t && t - tsOf(j) <= SAID_BEFORE_DAYS * 86_400_000)) w.saidBefore++;
+    weeks.set(key, w);
+  }
+  const weekly = [...weeks.entries()].sort((a, b) => a[0] - b[0]).map(([t, w]) => ({ t, ...w }));
   const buckets = [3, 4, 5, 6, 8, 12].filter((b) => b >= minSessions);
   if (buckets[0] !== minSessions) buckets.unshift(minSessions);
   const spread = buckets.map((lo, i) => {
@@ -372,6 +396,7 @@ export async function runRepeats(engine: Engine, opts: RepeatsOptions): Promise<
     sameDayBursts,
     spread,
     top: groups.slice(0, opts.top ?? 60),
+    weekly,
   };
 }
 

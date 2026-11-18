@@ -162,6 +162,42 @@ test('what you keep repeating: lists habits and lights up where they were said',
   await expect(canvas).toHaveAttribute('data-repeat', '0');
 });
 
+test('where the time goes: figures and charts from counts only', async ({ page }) => {
+  await ready(page);
+  await page.locator('#open-profile').click();
+  await expect(page.locator('#profile')).toBeVisible();
+  await expect(page.locator('#open-profile')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(stage)).toHaveAttribute('data-profile', '1');
+  await expect(page.locator('#profile-stats')).toContainText('counts only, no text');
+  await expect(page.locator('#profile .tile')).toHaveCount(4);
+  // One cell per hour of the week, and the invented history keeps the small hours empty.
+  await expect(page.locator('#profile svg.rhythm rect')).toHaveCount(168);
+  const cells = await page.locator('#profile svg.rhythm rect').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-v'))));
+  expect(cells.reduce((a, b) => a + b, 0)).toBeGreaterThan(500);
+  for (let d = 0; d < 7; d++) for (let h = 2; h <= 7; h++) expect(cells[d * 24 + h]).toBe(0);
+  await expect(page.locator('#profile .bar')).toHaveCount(6);
+  await expect(page.locator('#profile svg.trend polyline')).toHaveCount(1);
+  // Every chart has a table for screen readers.
+  await expect(page.locator('#profile table.sr-only')).toHaveCount(3);
+  // The value under the pointer is shown beside the mark.
+  await page.locator('#profile .bar').first().hover();
+  await expect(page.locator('#profile-tip')).toBeVisible();
+  await expect(page.locator('#profile-tip')).toContainText('session');
+  // No message text and no project name appears in the panel.
+  const text = (await page.locator('#profile').textContent()) ?? '';
+  expect(/sourdough|tokenizer|satellite|kitchen|parser|garden|network|music|orbit/i.test(text)).toBe(false);
+
+  // One right-hand panel at a time.
+  await page.locator('#open-repeats').click();
+  await expect(page.locator('#repeats')).toBeVisible();
+  await expect(page.locator('#profile')).toBeHidden();
+  await page.locator('#open-profile').click();
+  await expect(page.locator('#repeats')).toBeHidden();
+  await page.locator('#profile-close').click();
+  await expect(page.locator('#profile')).toBeHidden();
+  await expect(page.locator('#open-profile')).toHaveAttribute('aria-pressed', 'false');
+});
+
 test('conversation text is never interpreted as markup', async ({ page }) => {
   // The demo server is the real server code path; intercept one response to inject hostile text.
   await page.route('**/api/search?**', async (route) => {

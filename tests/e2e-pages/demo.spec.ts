@@ -37,6 +37,24 @@ async function readyPastIntro(page: Page): Promise<void> {
 
 test('loads from static files only and introduces itself', async ({ page }) => {
   const w = watch(page);
+  // Count any attempt to compile WebAssembly: the public demo is meant to ship none.
+  await page.addInitScript(() => {
+    const seen = { n: 0 };
+    (window as unknown as { __wasm: { n: number } }).__wasm = seen;
+    const W = WebAssembly as unknown as Record<string, unknown>;
+    for (const name of ['instantiate', 'instantiateStreaming', 'compile', 'compileStreaming', 'validate']) {
+      const original = W[name] as (...args: unknown[]) => unknown;
+      W[name] = (...args: unknown[]) => {
+        seen.n++;
+        return original.apply(WebAssembly, args);
+      };
+    }
+    const Module = WebAssembly.Module;
+    (WebAssembly as unknown as { Module: unknown }).Module = function (this: unknown, ...args: [BufferSource]) {
+      seen.n++;
+      return new Module(...args);
+    };
+  });
   await ready(page);
   await expect(page.locator(stage)).toHaveAttribute('data-particles', '6000');
   await expect(page.locator('#fatal')).toBeHidden();
@@ -72,6 +90,11 @@ test('loads from static files only and introduces itself', async ({ page }) => {
   expect(w.requests.length).toBeGreaterThan(5);
   expect(w.requests.filter((u) => !u.startsWith(`${ORIGIN}/loci/`) && !u.startsWith('data:') && !u.startsWith('blob:'))).toEqual([]);
   expect(w.requests.filter((u) => u.includes('/api/'))).toEqual([]);
+  // A search has not run yet in this test, so run one, then check no WebAssembly was ever compiled.
+  await page.locator('#q').fill('satellite orbit');
+  await page.locator('#q').press('Enter');
+  await expect(page.locator('#results-list li')).toHaveCount(12);
+  expect(await page.evaluate(() => (window as unknown as { __wasm: { n: number } }).__wasm.n)).toBe(0);
   expect(w.errors).toEqual([]);
 });
 
@@ -128,6 +151,45 @@ test('what keeps getting repeated: planted habits lead, of more than one kind', 
   expect(Number(await page.locator(stage).getAttribute('data-repeat'))).toBeGreaterThanOrEqual(3);
   await page.locator('#repeats-close').click();
   await expect(page.locator(stage)).toHaveAttribute('data-repeat', '0');
+  expect(w.errors).toEqual([]);
+});
+
+test('where the time goes: the profile panel works without a server', async ({ page }) => {
+  const w = watch(page);
+  await readyPastIntro(page);
+  await page.locator('#open-profile').click();
+  await expect(page.locator('#profile')).toBeVisible();
+  await expect(page.locator('#open-profile')).toHaveAttribute('aria-pressed', 'true');
+  await expect(page.locator(stage)).toHaveAttribute('data-profile', '1');
+  await expect(page.locator('#profile-stats')).toContainText('counts only, no text');
+  await expect(page.locator('#profile .tile')).toHaveCount(4);
+  // One cell per hour of the week, and the invented history keeps the small hours empty.
+  await expect(page.locator('#profile svg.rhythm rect')).toHaveCount(168);
+  const cells = await page.locator('#profile svg.rhythm rect').evaluateAll((els) => els.map((e) => Number(e.getAttribute('data-v'))));
+  expect(cells.reduce((a, b) => a + b, 0)).toBeGreaterThan(500);
+  for (let d = 0; d < 7; d++) for (let h = 2; h <= 7; h++) expect(cells[d * 24 + h]).toBe(0);
+  await expect(page.locator('#profile .bar')).toHaveCount(6);
+  await expect(page.locator('#profile svg.trend polyline')).toHaveCount(1);
+  // Every chart has a table for screen readers.
+  await expect(page.locator('#profile table.sr-only')).toHaveCount(3);
+  // The value under the pointer is shown beside the mark.
+  await page.locator('#profile .bar').first().hover();
+  await expect(page.locator('#profile-tip')).toBeVisible();
+  await expect(page.locator('#profile-tip')).toContainText('session');
+  // No message text and no project name appears in the panel.
+  const text = (await page.locator('#profile').textContent()) ?? '';
+  expect(/sourdough|tokenizer|satellite|kitchen|parser|garden|network|music|orbit/i.test(text)).toBe(false);
+
+  // One right-hand panel at a time.
+  await page.locator('#open-repeats').click();
+  await expect(page.locator('#repeats')).toBeVisible();
+  await expect(page.locator('#profile')).toBeHidden();
+  await page.locator('#open-profile').click();
+  await expect(page.locator('#repeats')).toBeHidden();
+  await page.locator('#profile-close').click();
+  await expect(page.locator('#profile')).toBeHidden();
+  await expect(page.locator('#open-profile')).toHaveAttribute('aria-pressed', 'false');
+  expect(w.requests.filter((u) => u.includes('/api/'))).toEqual([]);
   expect(w.errors).toEqual([]);
 });
 

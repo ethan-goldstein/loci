@@ -29,7 +29,10 @@
         <button type="button" role="radio" aria-checked="false" data-mode="bm25" title="Keywords only">bm25</button>
         <button type="button" role="radio" aria-checked="false" data-mode="recent" title="Hybrid plus a recency signal">recent</button>
       </div>
-      <button id="open-repeats" type="button" class="ghost pill" aria-pressed="false" title="Things you told your assistant in several separate sessions">what you keep repeating</button>
+      <div class="pills">
+        <button id="open-repeats" type="button" class="ghost pill" aria-pressed="false" title="Things you told your assistant in several separate sessions">what you keep repeating</button>
+        <button id="open-profile" type="button" class="ghost pill" aria-pressed="false" title="Sessions, prompts and hours, counted from timestamps only">where the time goes</button>
+      </div>
     </form>
 
     <div class="left">
@@ -76,6 +79,15 @@
       </div>
       <ol id="repeats-list"></ol>
     </section>
+
+    <section id="profile" class="panel results profile" aria-live="polite" hidden>
+      <div class="results-head">
+        <p id="profile-stats" class="muted"></p>
+        <button id="profile-close" type="button" class="ghost">close</button>
+      </div>
+      <div id="profile-body" class="profile-body"></div>
+    </section>
+    <div id="profile-tip" class="tooltip chart-tip" hidden></div>
 
     <aside id="detail" class="panel detail" hidden>
       <div class="detail-head">

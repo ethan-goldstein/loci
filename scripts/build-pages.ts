@@ -3,10 +3,11 @@ import os from 'node:os';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { Engine } from '../src/engine.ts';
-import { runRepeats } from '../src/insight/repeats.ts';
+import { runProfile } from '../src/insight/profile.ts';
+import { runRepeats, templatedPrompts } from '../src/insight/repeats.ts';
 import { buildDemoStore, hashEmbedder } from '../src/prove/demo.ts';
 import { buildViewerData } from '../src/serve/export.ts';
-import { repeatsView } from '../src/serve/http.ts';
+import { profileView, repeatsView } from '../src/serve/http.ts';
 
 /**
  * Builds the data for the public demo: a complete LOCI store of invented conversations, run
@@ -33,7 +34,10 @@ try {
   const cfg = await buildDemoStore(tmp, CHUNKS, SEED, { prose: true });
   const engine = Engine.open(cfg, { embedder: hashEmbedder(), save: false });
   const data = buildViewerData(engine, { demo: true, model: cfg.embedModel });
-  const repeats = repeatsView(await runRepeats(engine, { embedder: hashEmbedder() }), engine, data);
+  const repeatsReport = await runRepeats(engine, { embedder: hashEmbedder() });
+  const repeats = repeatsView(repeatsReport, engine, data);
+  // UTC, so the demo's profile is the same wherever it is built.
+  const profile = profileView(runProfile(engine, { timeZone: 'UTC', repeats: repeatsReport, notTyped: templatedPrompts(engine) }), engine);
 
   const n = engine.n;
   const corpus = {
@@ -59,6 +63,8 @@ try {
   const files: [string, Uint8Array | string][] = [
     ['manifest.json', JSON.stringify(data.manifest)],
     ['corpus.json', JSON.stringify(corpus)],
+    // Small and separate, so the profile panel does not wait for the text and the index to load.
+    ['profile.json', JSON.stringify(profile)],
     ['pos.f32', bytes(data.pos)],
     ['home.f32', bytes(data.home)],
     ['knn.u32', bytes(data.knn)],

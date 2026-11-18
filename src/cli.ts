@@ -277,17 +277,48 @@ const commands: Record<string, { help: string; run: Command }> = {
       }
     },
   },
+  profile: {
+    help: 'Where your sessions go: counts and durations only, no text. Flags: --tz <IANA zone> --idle 30 --json',
+    run: async (cfg, _args, flags) => {
+      const { runProfile, profileSummary } = await import('./insight/profile.ts');
+      const { templatedPrompts } = await import('./insight/repeats.ts');
+      const engine = openEngine(cfg, true, 'js');
+      try {
+        const repeats = readPrivate<import('./insight/repeats.ts').RepeatsReport>(cfg, 'repeats.json');
+        const timeZone = typeof flags.tz === 'string' ? flags.tz : Intl.DateTimeFormat().resolvedOptions().timeZone;
+        const report = runProfile(engine, {
+          timeZone,
+          idleMinutes: num(flags, 'idle', 30, 1, 240),
+          // A repeats report from an older store would describe different sentences.
+          repeats: repeats && repeats.corpus === engine.n ? repeats : null,
+          notTyped: templatedPrompts(engine),
+        });
+        // When you work is personal: the full report stays in the private store.
+        const file = writePrivate(cfg, 'profile.json', report);
+        if (flags.json) {
+          console.log(JSON.stringify(report, null, 2));
+          return;
+        }
+        for (const line of profileSummary(report)) console.log(line);
+        if (!report.saidBefore) console.log('Run `loci repeats` first to add the weekly "said before" series.');
+        console.log(`\nSaved to ${file}. The viewer shows it under "where the time goes".`);
+      } finally {
+        engine.close();
+      }
+    },
+  },
   report: {
-    help: 'Write RESULTS.md from the last bench, eval, ab and repeats. Flags: --out RESULTS.md',
+    help: 'Write RESULTS.md from the last bench, eval, ab, repeats and profile. Flags: --out RESULTS.md',
     run: async (cfg, _args, flags) => {
       const { renderResults } = await import('./prove/report.ts');
       const bench = readPrivate<import('./prove/bench.ts').BenchReport>(cfg, 'bench.json');
       const ev = readPrivate<import('./prove/eval.ts').EvalReport>(cfg, 'eval.json');
       const ab = readPrivate<import('./prove/ab.ts').AbReport>(cfg, 'ab.json');
       const repeats = readPrivate<import('./insight/repeats.ts').RepeatsReport>(cfg, 'repeats.json');
-      if (!bench && !ev && !ab && !repeats) throw new Error('Nothing to report. Run `loci bench` and `loci eval` first.');
+      const profile = readPrivate<import('./insight/profile.ts').ProfileReport>(cfg, 'profile.json');
+      if (!bench && !ev && !ab && !repeats && !profile) throw new Error('Nothing to report. Run `loci bench` and `loci eval` first.');
       const out = path.resolve(typeof flags.out === 'string' ? flags.out : 'RESULTS.md');
-      fs.writeFileSync(out, renderResults(bench, ev, new Date().toISOString().slice(0, 10), ab, repeats));
+      fs.writeFileSync(out, renderResults(bench, ev, new Date().toISOString().slice(0, 10), ab, repeats, profile));
       console.log(`wrote ${path.relative(process.cwd(), out) || out}`);
     },
   },
@@ -346,7 +377,7 @@ const commands: Record<string, { help: string; run: Command }> = {
     run: async (cfg, _args, flags) => {
       if (flags.yes !== true) throw new Error(`This deletes everything in ${cfg.home}. Re-run with --yes to confirm.`);
       const p = paths(cfg);
-      const targets = [p.db, `${p.db}-wal`, `${p.db}-shm`, p.vectors, p.hnsw, ...['bench.json', 'eval.json', 'ab.json', 'ab-items.json', 'ab-cache.jsonl'].map((f) => path.join(cfg.home, f))];
+      const targets = [p.db, `${p.db}-wal`, `${p.db}-shm`, p.vectors, p.hnsw, ...['bench.json', 'eval.json', 'ab.json', 'ab-items.json', 'ab-cache.jsonl', 'repeats.json', 'profile.json'].map((f) => path.join(cfg.home, f))];
       let removed = 0;
       for (const t of targets) {
         if (fs.existsSync(t)) {

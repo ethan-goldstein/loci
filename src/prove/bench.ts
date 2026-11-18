@@ -3,6 +3,8 @@ import type { Engine } from '../engine.ts';
 import type { Embedder } from '../embed/ollama.ts';
 import { BM25, ftsQuery } from '../index/bm25.ts';
 import { DEFAULT_PARAMS, Hnsw, exactTopK } from '../index/hnsw.ts';
+import type { QueryKernel } from '../index/hnsw.ts';
+import { loadSimdKernel } from '../kernel/simd.ts';
 import { percentile } from './bootstrap.ts';
 import { selectQueries } from './eval.ts';
 import { clusteredVectors } from './synth.ts';
@@ -33,6 +35,29 @@ export interface IndexBench {
   exactP50Ms: number;
   exactP95Ms: number;
   sweep: SweepPoint[];
+  /** The same index searched with each inner loop. Absent from reports written before this was measured; null when the kernel could not load. */
+  kernels?: KernelBench | null;
+}
+
+export interface KernelRow {
+  /** 'js' (the TypeScript loop) or 'wasm-simd'. */
+  name: string;
+  exactP50Ms: number;
+  sweep: { ef: number; recall10: number; p50Ms: number }[];
+}
+
+/**
+ * The TypeScript inner loop against the WebAssembly SIMD one, on one index and one set of queries.
+ * Each is run for several rounds, interleaved and in alternating order, so that a machine warming
+ * up or doing something else in the background does not favour either. The median round is kept.
+ */
+export interface KernelBench {
+  rounds: number;
+  /** Share of queries whose exact top 10 is the same list from both loops. */
+  exactTop10Agreement: number;
+  /** Largest difference between the two loops in any top-10 similarity. */
+  maxAbsDiff: number;
+  rows: KernelRow[];
 }
 
 export interface BenchReport {
@@ -45,6 +70,7 @@ export interface BenchReport {
 }
 
 const EFS = [16, 32, 64, 128, 256];
+const KERNEL_ROUNDS = 5;
 
 function timeEach(run: (qi: number) => void, count: number): number[] {
   const ms: number[] = [];
@@ -77,6 +103,7 @@ export function benchIndex(label: string, vectors: Float32Array, dim: number, n:
     const total = ms.reduce((a, b) => a + b, 0);
     sweep.push({ ef, recall10: hit / (nq * 10), p50Ms: percentile(ms, 0.5), p95Ms: percentile(ms, 0.95), qps: (nq / total) * 1000 });
   }
+  const kernels = benchKernels(index, vectors, dim, n, q, nq, truth);
   const stats = index.stats();
   return {
     label,
@@ -91,7 +118,72 @@ export function benchIndex(label: string, vectors: Float32Array, dim: number, n:
     exactP50Ms: percentile(exactMs, 0.5),
     exactP95Ms: percentile(exactMs, 0.95),
     sweep,
+    kernels,
   };
+}
+
+const median = (xs: number[]) => [...xs].sort((a, b) => a - b)[Math.floor(xs.length / 2)]!;
+
+function benchKernels(index: Hnsw, vectors: Float32Array, dim: number, n: number, q: (qi: number) => Float32Array, nq: number, truth: Set<number>[]): KernelBench | null {
+  const simd = loadSimdKernel(vectors, dim, n);
+  if (!simd) return null;
+  const contenders: [string, QueryKernel | null][] = [
+    ['js', null],
+    [simd.name, simd],
+  ];
+  try {
+    // Do the two loops give the same exact answer?
+    let same = 0;
+    let maxAbsDiff = 0;
+    for (let qi = 0; qi < nq; qi++) {
+      index.useKernel(null);
+      const a = index.exact(q(qi), 10);
+      index.useKernel(simd);
+      const b = index.exact(q(qi), 10);
+      if (a.map((h) => h.id).join() === b.map((h) => h.id).join()) same++;
+      const simOf = new Map(a.map((h) => [h.id, h.sim]));
+      for (const h of b) if (simOf.has(h.id)) maxAbsDiff = Math.max(maxAbsDiff, Math.abs(h.sim - simOf.get(h.id)!));
+    }
+
+    const exact: Record<string, number[]> = {};
+    const p50: Record<string, number[][]> = {};
+    const recall: Record<string, number[]> = {};
+    for (const [name] of contenders) {
+      exact[name] = [];
+      p50[name] = EFS.map(() => []);
+      recall[name] = [];
+    }
+    for (let round = 0; round < KERNEL_ROUNDS; round++) {
+      // Alternate who goes first, so neither always runs on the warmer machine.
+      const order = round % 2 === 0 ? contenders : [...contenders].reverse();
+      for (const [name, kernel] of order) {
+        index.useKernel(kernel);
+        for (let qi = 0; qi < Math.min(30, nq); qi++) index.exact(q(qi), 10); // warm up
+        exact[name]!.push(percentile(timeEach((qi) => void index.exact(q(qi), 10), nq), 0.5));
+        EFS.forEach((ef, ei) => {
+          for (let qi = 0; qi < Math.min(50, nq); qi++) index.search(q(qi), 10, ef);
+          let hit = 0;
+          const ms = timeEach((qi) => {
+            for (const h of index.search(q(qi), 10, ef)) if (truth[qi]!.has(h.id)) hit++;
+          }, nq);
+          p50[name]![ei]!.push(percentile(ms, 0.5));
+          if (round === 0) recall[name]!.push(hit / (nq * 10));
+        });
+      }
+    }
+    return {
+      rounds: KERNEL_ROUNDS,
+      exactTop10Agreement: same / Math.max(1, nq),
+      maxAbsDiff,
+      rows: contenders.map(([name]) => ({
+        name,
+        exactP50Ms: median(exact[name]!),
+        sweep: EFS.map((ef, ei) => ({ ef, recall10: recall[name]![ei]!, p50Ms: median(p50[name]![ei]!) })),
+      })),
+    };
+  } finally {
+    index.useKernel(null);
+  }
 }
 
 export interface BenchOptions {

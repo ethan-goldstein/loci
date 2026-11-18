@@ -173,6 +173,17 @@ export interface RepeatsView {
   items?: RepeatItem[];
 }
 
+export interface ProfileView {
+  available: boolean;
+  reason?: string;
+  profile?: import('../src/insight/profile.ts').ProfileReport;
+}
+
+export async function profile(signal?: AbortSignal): Promise<ProfileView> {
+  if (provider) return (await provider).profile();
+  return getJson<ProfileView>('/api/profile', signal);
+}
+
 export async function repeats(signal?: AbortSignal): Promise<RepeatsView> {
   if (provider) return (await provider).repeats();
   return getJson<RepeatsView>('/api/repeats', signal);
