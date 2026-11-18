@@ -236,3 +236,139 @@ test('fits a phone screen', async ({ page }) => {
   expect(results!.x + results!.width).toBeLessThanOrEqual(390);
   expect(w.errors).toEqual([]);
 });
+
+/** Waits until the tour has finished the work of step `i`. */
+async function tourAt(page: Page, i: number): Promise<void> {
+  await expect(page.locator(stage)).toHaveAttribute('data-tour-step', String(i));
+  await expect(page.locator(stage)).toHaveAttribute('data-tour-done', String(i), { timeout: 15_000 });
+}
+
+test('the guided tour walks the real index, by keyboard and by scrolling', async ({ page }) => {
+  const w = watch(page);
+  await readyPastIntro(page);
+  await page.locator('#tour-open').click();
+  await expect(page.locator('#tour')).toBeVisible();
+  await expect(page.locator(stage)).toHaveAttribute('data-tour', '1');
+  // During the tour the search bar and the panels step aside.
+  await expect(page.locator('#search-form')).toBeHidden();
+  const card = (i: number) => page.locator(`.tour-step[data-step="${i}"] .tour-card`);
+
+  await tourAt(page, 0);
+  await expect(card(0)).toContainText('6,000 messages from an invented history');
+
+  // A point and its neighbours in the index.
+  await page.keyboard.press('ArrowDown');
+  await tourAt(page, 1);
+  expect(Number(await page.locator(stage).getAttribute('data-tour-glow'))).toBeGreaterThanOrEqual(3);
+
+  // The upper layers: a few hundred of the 6,000 points.
+  await page.keyboard.press('ArrowDown');
+  await tourAt(page, 2);
+  const upper = Number(await page.locator(stage).getAttribute('data-tour-glow'));
+  expect(upper).toBeGreaterThan(250);
+  expect(upper).toBeLessThan(500);
+  await expect(card(2)).toContainText(`${upper} of the 6,000`);
+
+  // A real search, replayed in two parts.
+  await page.keyboard.press('ArrowDown');
+  await tourAt(page, 3);
+  await expect(card(3)).toContainText('"sourdough starter hydration"');
+  await expect(card(3)).toContainText(/takes \d+ long hops?/);
+  await page.keyboard.press('ArrowDown');
+  await tourAt(page, 4);
+  await expect(page.locator(stage)).toHaveAttribute('data-hits', '12');
+  await expect(card(4)).toContainText(/compared \d{2,} messages/);
+
+  // Meaning against keywords.
+  await page.locator(`.tour-step[data-step="4"] .tour-nav button`).last().click();
+  await tourAt(page, 5);
+  await expect(card(5)).toContainText(/\d+ (was|were) found by both, \d+ by meaning only and \d+ by keywords only/);
+
+  // The most repeated instruction, lit wherever it was said.
+  await page.keyboard.press('ArrowRight');
+  await tourAt(page, 6);
+  await expect(card(6)).toContainText('separate sessions');
+  expect(Number(await page.locator(stage).getAttribute('data-repeat'))).toBeGreaterThanOrEqual(3);
+
+  // The measured results, with a link to the file they come from.
+  await page.keyboard.press('PageDown');
+  await tourAt(page, 7);
+  const link = page.locator('.tour-link a');
+  await expect(link).toHaveAttribute('href', 'https://github.com/ethan-goldstein/loci/blob/main/RESULTS.md');
+  await expect(link).toHaveAttribute('rel', 'noopener noreferrer');
+
+  // Back with the keyboard, and to any step with a dot.
+  await page.keyboard.press('ArrowUp');
+  await tourAt(page, 6);
+  await page.locator('.tour-dot').nth(0).click();
+  await tourAt(page, 0);
+
+  // A real scroll moves through the cards too. Let the move back to the first card come to rest first.
+  const scrollTop = () => page.evaluate(() => document.getElementById('tour-scroll')!.scrollTop);
+  await expect.poll(scrollTop, { timeout: 10_000 }).toBe(0);
+  await page.mouse.move(400, 450);
+  await page.mouse.wheel(0, 900);
+  await expect.poll(scrollTop, { timeout: 10_000 }).toBeGreaterThan(600);
+  await tourAt(page, 1);
+
+  // Esc leaves, clears what the tour lit, and gives the page back.
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#tour')).toBeHidden();
+  await expect(page.locator(stage)).toHaveAttribute('data-tour', '0');
+  await expect(page.locator(stage)).toHaveAttribute('data-hits', '0');
+  await expect(page.locator('#search-form')).toBeVisible();
+  // Nothing of the tour is left covering the map.
+  expect(await page.evaluate(() => document.elementFromPoint(720, 450)?.closest('#tour') === null)).toBe(true);
+
+  expect(w.requests.filter((u) => u.includes('/api/'))).toEqual([]);
+  expect(w.errors).toEqual([]);
+});
+
+test('the address can open the tour at a step or run a search, and the welcome panel can start the tour', async ({ page }) => {
+  await page.goto('./#tour=2');
+  await expect(page.locator(stage)).toHaveAttribute('data-ready', '1', { timeout: 30_000 });
+  // Asked for by address, so the first-visit welcome does not cover it.
+  await expect(page.locator('#intro')).toBeHidden();
+  await expect(page.locator('#tour')).toBeVisible();
+  await tourAt(page, 2);
+  await page.locator('#tour-exit').click();
+  await expect(page.locator('#tour')).toBeHidden();
+
+  await page.goto('./#q=satellite%20orbit');
+  await page.reload();
+  await expect(page.locator(stage)).toHaveAttribute('data-ready', '1', { timeout: 30_000 });
+  await expect(page.locator('#q')).toHaveValue('satellite orbit');
+  await expect(page.locator('#results-list li')).toHaveCount(12);
+
+  await page.goto('./');
+  await page.reload();
+  await expect(page.locator(stage)).toHaveAttribute('data-ready', '1', { timeout: 30_000 });
+  await expect(page.locator('#intro')).toBeVisible();
+  await page.locator('#intro button[data-try="tour"]').click();
+  await expect(page.locator('#intro')).toBeHidden();
+  await expect(page.locator('#tour')).toBeVisible();
+  await tourAt(page, 0);
+});
+
+test('the tour fits a phone and works with reduced motion', async ({ page }) => {
+  const w = watch(page);
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await page.setViewportSize({ width: 390, height: 844 });
+  await readyPastIntro(page);
+  await page.locator('#tour-open').click();
+  for (let i = 0; i < 8; i++) {
+    await tourAt(page, i);
+    const box = await page.locator(`.tour-step[data-step="${i}"] .tour-card`).boundingBox();
+    expect(box).not.toBeNull();
+    expect(box!.x).toBeGreaterThanOrEqual(0);
+    expect(box!.x + box!.width).toBeLessThanOrEqual(390);
+    expect(box!.y).toBeGreaterThanOrEqual(0);
+    expect(box!.y + box!.height).toBeLessThanOrEqual(844);
+    if (i < 7) await page.locator(`.tour-step[data-step="${i}"] .tour-nav button`).last().click();
+  }
+  expect(await page.evaluate(() => document.documentElement.scrollWidth)).toBeLessThanOrEqual(390);
+  // The last card's button ends the tour.
+  await page.locator('.tour-step[data-step="7"] .tour-nav button').last().click();
+  await expect(page.locator('#tour')).toBeHidden();
+  expect(w.errors).toEqual([]);
+});

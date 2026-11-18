@@ -42,6 +42,7 @@
         <p class="brand-row">
           <span id="demo-badge" class="badge" hidden>demo data</span>
           <button id="about-open" type="button" class="ghost" hidden>about</button>
+          <button id="tour-open" type="button" class="ghost" title="A guided tour of how the search works">how it works</button>
         </p>
       </header>
       <nav id="legend" class="panel legend" aria-label="Projects"></nav>
@@ -137,8 +138,12 @@
           Each point here is one message, and messages that mean similar things sit together. This page runs the real search index in your
           browser, on made-up conversations about six made-up projects. Nothing you type leaves the page.
         </p>
-        <p class="label">three things to try</p>
+        <p class="label">four things to try</p>
         <div class="intro-actions">
+          <button type="button" class="ghost" data-try="tour">
+            <span class="try-name">Take the tour</span>
+            <span class="try-note">how the search works, in eight short steps</span>
+          </button>
           <button type="button" class="ghost" data-try="search" data-query="sourdough starter hydration">
             <span class="try-name">Search by meaning</span>
             <span class="try-note">and watch the path the index takes to the answer</span>
@@ -158,6 +163,14 @@
         </div>
       </div>
     </div>
+
+    <section id="tour" class="tour" aria-label="Guided tour: how the search works" hidden>
+      <div class="tour-top">
+        <nav id="tour-dots" class="tour-dots" aria-label="Tour steps"></nav>
+        <button id="tour-exit" type="button" class="ghost">exit tour</button>
+      </div>
+      <div id="tour-scroll" class="tour-scroll"></div>
+    </section>
 
     <div id="fatal" class="fatal" hidden></div>
 

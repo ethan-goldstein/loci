@@ -8,6 +8,7 @@ export interface IntroActions {
   search: (query: string) => void;
   repeats: () => void;
   play: () => void;
+  tour: () => void;
 }
 
 const SEEN = 'loci.intro.seen';
@@ -20,7 +21,8 @@ function seen(): boolean {
   }
 }
 
-export function setupIntro(actions: IntroActions): void {
+/** `quiet` skips the first-visit welcome, for when the address already asks for a tour or a search. */
+export function setupIntro(actions: IntroActions, quiet = false): void {
   const box = document.getElementById('intro');
   const open = document.getElementById('about-open');
   const close = document.getElementById('intro-close');
@@ -60,8 +62,9 @@ export function setupIntro(actions: IntroActions): void {
       if (b.dataset.try === 'search') actions.search(b.dataset.query ?? '');
       else if (b.dataset.try === 'repeats') actions.repeats();
       else if (b.dataset.try === 'play') actions.play();
+      else if (b.dataset.try === 'tour') actions.tour();
     });
   }
 
-  if (!seen()) show();
+  if (!quiet && !seen()) show();
 }

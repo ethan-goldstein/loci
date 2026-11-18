@@ -94,6 +94,8 @@ export interface Corpus {
   sentences: Uint8Array;
   /** Index into `manifest.clusters` per particle. */
   cluster: Uint8Array;
+  /** Highest layer of the index graph each particle is on (0 for most). */
+  level: Uint8Array;
 }
 
 export async function loadCorpus(): Promise<Corpus> {
@@ -101,7 +103,7 @@ export async function loadCorpus(): Promise<Corpus> {
 }
 
 async function loadFromServer(): Promise<Corpus> {
-  const [manifest, pos, home, knn, meta, sentences, cluster] = await Promise.all([
+  const [manifest, pos, home, knn, meta, sentences, cluster, level] = await Promise.all([
     getJson<Manifest>('/api/manifest'),
     getBuffer('pos'),
     getBuffer('home'),
@@ -109,6 +111,7 @@ async function loadFromServer(): Promise<Corpus> {
     getBuffer('meta'),
     getBuffer('sentences'),
     getBuffer('cluster'),
+    getBuffer('level'),
   ]);
   return {
     manifest,
@@ -118,6 +121,7 @@ async function loadFromServer(): Promise<Corpus> {
     meta: new Uint32Array(meta),
     sentences: new Uint8Array(sentences),
     cluster: new Uint8Array(cluster),
+    level: new Uint8Array(level),
   };
 }
 
@@ -134,6 +138,7 @@ function checked(corpus: Corpus): Corpus {
     corpus.meta.length === n * 3 &&
     corpus.sentences.length === n &&
     corpus.cluster.length === n &&
+    corpus.level.length === n &&
     Array.isArray(manifest.clusters) &&
     Array.isArray(manifest.projects);
   if (!ok) throw new Error('The data does not match its manifest');

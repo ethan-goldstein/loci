@@ -198,6 +198,24 @@ test('where the time goes: figures and charts from counts only', async ({ page }
   await expect(page.locator('#open-profile')).toHaveAttribute('aria-pressed', 'false');
 });
 
+test('the guided tour opens over the local viewer and leaves it as it was', async ({ page }) => {
+  await ready(page);
+  await page.locator('#tour-open').click();
+  await expect(page.locator('#tour')).toBeVisible();
+  await expect(page.locator(stage)).toHaveAttribute('data-tour-done', '0', { timeout: 15_000 });
+  for (let i = 1; i < 8; i++) {
+    await page.keyboard.press('ArrowDown');
+    await expect(page.locator(stage)).toHaveAttribute('data-tour-done', String(i), { timeout: 15_000 });
+  }
+  await page.keyboard.press('Escape');
+  await expect(page.locator('#tour')).toBeHidden();
+  await expect(page.locator(stage)).toHaveAttribute('data-hits', '0');
+  // The viewer still works afterwards.
+  await page.locator('#q').fill('satellite orbit');
+  await page.locator('#q').press('Enter');
+  await expect(page.locator('#results-list li')).toHaveCount(12);
+});
+
 test('conversation text is never interpreted as markup', async ({ page }) => {
   // The demo server is the real server code path; intercept one response to inject hostile text.
   await page.route('**/api/search?**', async (route) => {

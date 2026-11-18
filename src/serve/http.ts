@@ -140,6 +140,7 @@ export function createHandler(engine: Engine, data: ViewerData, port: number, op
     meta: Buffer.from(data.meta.buffer, data.meta.byteOffset, data.meta.byteLength),
     sentences: Buffer.from(data.sentences.buffer, data.sentences.byteOffset, data.sentences.byteLength),
     cluster: Buffer.from(data.cluster.buffer, data.cluster.byteOffset, data.cluster.byteLength),
+    level: Buffer.from(data.level.buffer, data.level.byteOffset, data.level.byteLength),
   };
   const projectByIndex = data.manifest.projects;
 

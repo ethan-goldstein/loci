@@ -7,13 +7,16 @@ import { Activity } from './Activity.ts';
 import '@fontsource-variable/space-grotesk/wght.css';
 import '@fontsource-variable/jetbrains-mono/wght.css';
 import { STATIC, chunk, loadCorpus, profile, repeats, search } from './api.ts';
-import type { Corpus, Mode, ProfileView, RepeatsView } from './api.ts';
+import type { Corpus, Mode, ProfileView, RepeatsView, SearchResponse } from './api.ts';
 import { Cloud } from './Cloud.ts';
 import { Hud } from './hud.ts';
 import { setupIntro } from './intro.ts';
 import type { ToggleName } from './hud.ts';
 import { Labels } from './Labels.ts';
 import { OrbitRig } from './OrbitRig.ts';
+import { setupTour } from './tour.ts';
+import { CARDS, parseHash } from './tour-logic.ts';
+import type { TourFacts } from './tour-logic.ts';
 import { Trace } from './Trace.ts';
 
 const canvas = document.getElementById('stage') as HTMLCanvasElement;
@@ -227,6 +230,7 @@ async function start(): Promise<void> {
     onPlay: () => {
       playing = !playing;
       if (playing && reveal >= 1) setReveal(0);
+      if (playing) rig.home(); // watch the history build from a view of the whole field
       hud.setScrub(reveal, dateAt(reveal), playing);
     },
     onSelect: (particle) => void select(particle),
@@ -375,6 +379,7 @@ async function start(): Promise<void> {
       hud.focusSearch();
     } else if (e.key === 'Escape') {
       clearSearch();
+      hud.clearQuery();
       hud.hideRepeats();
       hud.hideProfile();
       cloud.selected = -1;
@@ -424,12 +429,17 @@ async function start(): Promise<void> {
   // --- resize and render loop -----------------------------------------------------------------
   let viewW = 1;
   let viewH = 1;
+  /** How far to slide the picture right and up, as fractions of the view. Zero outside the tour. */
+  let viewShift: [right: number, up: number] = [0, 0];
   const resize = () => {
     viewW = canvas.clientWidth;
     viewH = canvas.clientHeight;
     renderer.setSize(viewW, viewH, false);
     composer?.setSize(viewW, viewH);
     camera.aspect = viewW / Math.max(1, viewH);
+    // While the tour's cards cover part of the screen, the picture is slid into the part they leave free.
+    if (viewShift[0] !== 0 || viewShift[1] !== 0) camera.setViewOffset(viewW, viewH, -viewShift[0] * viewW, viewShift[1] * viewH, viewW, viewH);
+    else camera.clearViewOffset();
     camera.updateProjectionMatrix();
     cloud.resize(pixelRatio, viewH);
     trace.resize(pixelRatio, viewH);
@@ -439,9 +449,12 @@ async function start(): Promise<void> {
   resize();
 
   // Frame the whole field once it has had a moment to arrange itself.
-  const fit = () => {
+  /** Remembers the view that frames the whole field, and goes to it unless told to stay put. */
+  const fit = (move = true) => {
     const { centre, radius } = cloud.extent();
-    rig.focus(centre, Math.min(12, Math.max(1.2, radius * 2.35)));
+    const distance = Math.min(12, Math.max(1.2, radius * 2.35));
+    rig.setHome(centre, distance);
+    if (move) rig.focus(centre, distance);
   };
   let fitted = false;
 
@@ -475,7 +488,8 @@ async function start(): Promise<void> {
     trace.update(dt, time);
     if (!fitted && cloud.frame === 240) {
       fitted = true;
-      fit();
+      // If the tour is already open (the address asked for it), it is steering the camera: only note the home view.
+      fit(!tour.active);
     }
 
     if (pointer && pointerMoved && !rig.isDragging) {
@@ -509,14 +523,148 @@ async function start(): Promise<void> {
     }
   };
   canvas.dataset.particles = String(manifest.n);
+  // --- guided tour ----------------------------------------------------------------------------
+  // Each card calls the same things a visitor's clicks would, and reads its numbers from the
+  // index or from a search it has just run. Nothing on a card is typed in by hand.
+  const upperLayers: number[] = [];
+  for (const level of corpus.level) for (let l = 1; l <= level; l++) upperLayers[l - 1] = (upperLayers[l - 1] ?? 0) + 1;
+  const tourQuery = manifest.demo ? 'sourdough starter hydration' : manifest.clusters[0]?.words.join(' ') || 'tests';
+  const facts: TourFacts = { n: manifest.n, knn: manifest.knn, layers: upperLayers, demo: manifest.demo, query: tourQuery };
+  let tourSearch: Promise<SearchResponse> | null = null;
+  const tourResult = () => (tourSearch ??= search(tourQuery, 'hybrid', null));
+  const light = (glow: [number, number][]) => {
+    cloud.setGlow(glow, true);
+    canvas.dataset.tourGlow = String(glow.length);
+  };
+  const tourReset = () => {
+    clearSearch();
+    hud.clearQuery();
+    hud.hideRepeats();
+    hud.hideProfile();
+    hud.hideDetail();
+    cloud.selected = -1;
+    canvas.dataset.repeat = '0';
+    canvas.dataset.tourGlow = '0';
+    playing = false;
+    if (reveal < 1) setReveal(1);
+    rig.home();
+  };
+  const tour = setupTour(
+    {
+      facts,
+      reset: tourReset,
+      shown: (open) => {
+        // Cards sit on the left on a wide screen and along the bottom on a narrow one.
+        const narrow = window.matchMedia('(max-width: 1100px)').matches;
+        viewShift = !open ? [0, 0] : narrow ? [0, 0.2] : [0.13, 0];
+        resize();
+      },
+      steps: [
+        // Each point is one message.
+        () => tourReset(),
+        // One point and the points the index linked it to.
+        () => {
+          tourReset();
+          let p = corpus.level.findIndex((l) => l >= 2);
+          if (p < 0) p = corpus.level.findIndex((l) => l >= 1);
+          if (p < 0) p = 0;
+          const glow: [number, number][] = [[p, 1]];
+          for (let j = 0; j < manifest.knn; j++) {
+            const q = corpus.knn[p * manifest.knn + j]!;
+            if (q !== p) glow.push([q, 0.7]);
+          }
+          cloud.selected = p;
+          light(glow);
+          rig.focus(cloud.positionOf(p), 1.5);
+        },
+        // The points that also live on the upper layers.
+        () => {
+          tourReset();
+          const glow: [number, number][] = [];
+          corpus.level.forEach((l, i) => {
+            if (l >= 1) glow.push([i, l >= 3 ? 1 : l === 2 ? 0.8 : 0.45]);
+          });
+          light(glow);
+        },
+        // A search: the long hops across the upper layers.
+        async () => {
+          tourReset();
+          const res = await tourResult();
+          const upper = res.trace.filter((s) => s[0] >= 1);
+          facts.hops = upper.filter((s) => s[2] >= 0).length;
+          facts.compared = res.trace.filter((s) => s[0] === 0).length;
+          light(upper.map((s) => [s[1], 1] as [number, number]));
+          trace.play(upper, [], reducedMotion);
+        },
+        // The same search: the careful look around on the bottom layer, and the answers.
+        async () => {
+          const res = await tourResult();
+          const hits = res.hits.map((h) => h.particle);
+          facts.compared = res.trace.filter((s) => s[0] === 0).length;
+          const glow: [number, number][] = res.trace.map((s) => [s[1], 0.28]);
+          for (const h of hits) glow.push([h, 1]);
+          light(glow);
+          canvas.dataset.hits = String(hits.length);
+          trace.play(res.trace, hits, reducedMotion);
+          if (hits.length > 0) {
+            const centre = new THREE.Vector3();
+            for (const h of hits) centre.add(cloud.positionOf(h));
+            centre.multiplyScalar(1 / hits.length);
+            rig.focus(centre, Math.max(cloud.extent().radius * 1.15, 1.6));
+          }
+        },
+        // Meaning against keywords, and what the fused list keeps.
+        async () => {
+          trace.clear();
+          canvas.dataset.hits = '0';
+          const [dense, lexical, fused] = await Promise.all([search(tourQuery, 'dense', null), search(tourQuery, 'bm25', null), tourResult()]);
+          const byMeaning = new Set(dense.hits.map((h) => h.particle));
+          const byWords = new Set(lexical.hits.map((h) => h.particle));
+          const both = [...byMeaning].filter((p) => byWords.has(p));
+          facts.both = both.length;
+          facts.meaning = byMeaning.size - both.length;
+          facts.keywords = byWords.size - both.length;
+          facts.folded = fused.folded;
+          const glow: [number, number][] = [...new Set([...byMeaning, ...byWords])].map((p) => [p, byMeaning.has(p) && byWords.has(p) ? 1 : 0.5]);
+          light(glow);
+          rig.home();
+        },
+        // The thing said in the most separate sessions.
+        async () => {
+          trace.clear();
+          repeatsCache ??= await repeats();
+          const item = repeatsCache.items?.[0];
+          facts.repeat = item ? { text: item.text, sessions: item.sessions } : null;
+          light(item ? item.particles.map((p) => [p, 1] as [number, number]) : []);
+          if (!item) cloud.setGlow([], false);
+          canvas.dataset.repeat = String(item?.particles.length ?? 0);
+          rig.home();
+        },
+        // What the measured results say.
+        () => tourReset(),
+      ],
+    },
+    canvas,
+    reducedMotion,
+  );
+  document.getElementById('tour-open')?.addEventListener('click', () => tour.open());
+
+  // The address can ask for the tour (#tour, #tour=3) or for a search (#q=some+words).
+  const asked = parseHash(location.hash, CARDS.length);
   if (STATIC) {
     // The welcome panel's "try" buttons press the real controls, so they show what a visitor would do.
-    setupIntro({
-      search: (query) => hud.search(query),
-      repeats: () => document.getElementById('open-repeats')?.click(),
-      play: () => document.getElementById('play')?.click(),
-    });
+    setupIntro(
+      {
+        search: (query) => hud.search(query),
+        repeats: () => document.getElementById('open-repeats')?.click(),
+        play: () => document.getElementById('play')?.click(),
+        tour: () => tour.open(),
+      },
+      asked.tour !== null || asked.query !== null,
+    );
   }
+  if (asked.tour !== null) tour.open(asked.tour);
+  else if (asked.query !== null) hud.search(asked.query);
   canvas.dataset.ready = '1';
   raf = requestAnimationFrame(frame);
 

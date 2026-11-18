@@ -111,7 +111,7 @@ function engine(): Promise<Loaded> {
 }
 
 export async function loadCorpus(): Promise<Corpus> {
-  const [m, pos, home, knn, meta, sentences, cluster] = await Promise.all([
+  const [m, pos, home, knn, meta, sentences, cluster, level] = await Promise.all([
     manifest(),
     getBuffer('pos.f32'),
     getBuffer('home.f32'),
@@ -119,6 +119,7 @@ export async function loadCorpus(): Promise<Corpus> {
     getBuffer('meta.u32'),
     getBuffer('sentences.u8'),
     getBuffer('cluster.u8'),
+    getBuffer('level.u8'),
   ]);
   // Fetch the rest in the background; a failure surfaces when something first needs it.
   void engine().catch(() => undefined);
@@ -130,6 +131,7 @@ export async function loadCorpus(): Promise<Corpus> {
     meta: new Uint32Array(meta),
     sentences: new Uint8Array(sentences),
     cluster: new Uint8Array(cluster),
+    level: new Uint8Array(level),
   };
 }
 

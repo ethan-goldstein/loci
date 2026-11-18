@@ -171,6 +171,7 @@ The server exposes four tools, all read-only: `search`, `get_thread`, `timeline`
 - **What you keep repeating.** A panel listing the things you said in several sessions, most widespread first, each with its count, span and kind. Click one to light up every place it was said. It reads the result of `loci repeats`.
 - **Glow and depth.** A bloom pass, a tone curve so dense regions keep their colour instead of clipping to white, and per-point depth of field focused on whatever the camera is looking at. Both can be switched off, as can dust and labels; the choices are remembered in the browser.
 - **Where the time goes.** A panel of counts taken from timestamps alone: sessions, active hours, a typical session, prompts by weekday and hour, sessions by size, and the weekly share of sentences you had said before. It reads the result of `loci profile`. No text is read to make it, and the weekday-and-hour pattern stays on your machine.
+- **How it works.** A guided tour in eight cards that scroll over the map: a point and its neighbours, the sparse upper layers of the graph, a real search replayed first across those layers and then on the bottom one, keyword hits against meaning hits, the most repeated instruction, and what the measured results say. Every number on a card is read from the index or from a search it has just run. Scrolling drives it, and so do the buttons, the step dots and the arrow keys; Esc leaves. `#tour` in the address opens it, and `#q=some+words` opens the page with a search running.
 - **Folded results.** Search skips a result that is a near-copy of one already shown and says how many it folded. `loci search --plain` and `diverse=0` on the local API give the plain ranking.
 - `/` focuses search, `Esc` clears, click a point to read it.
 
@@ -227,7 +228,7 @@ npm test
 npm run test:e2e
 ```
 
-192 unit tests and 15 end-to-end tests: 9 against the local viewer and 6 against the public demo build. The ones that matter most:
+198 unit tests and 19 end-to-end tests: 10 against the local viewer and 9 against the public demo build. The ones that matter most:
 
 - **HNSW against brute force:** recall thresholds, determinism for a seed, incremental extension producing the same graph as a one-shot build, file-format round trip, rejection of corrupt files, filtered search against a filtered oracle, and a check that every step of a recorded trace starts from a node already reached.
 - **The SIMD kernel against the TypeScript loop it replaces:** agreement at seventeen vector lengths including every remainder case, the same graph bytes with or without it, the same neighbours exactly and through the graph, and a clean fallback when WebAssembly is missing.
@@ -241,7 +242,8 @@ npm run test:e2e
 - **ChatGPT import:** conversation branches, dropped tool and system messages, zip extraction limited to the conversation JSON, and redaction of a seeded key.
 - **Gesture pipeline:** the mapper, drag-anchor and debounce tests ported from SENTINEL.
 - **A/B harness** on the synthetic store with a fake model: the memory arm never sees the held-out session or anything dated after it began, the judge receives only question, reference and answer, a planted effect is detected, and each branch of the decision rule gives the verdict it should.
-- **Public demo:** served from a sub-path with no server behind it, it must make no request to anything but its own files, answer every ranking mode in the page, lead its repeats with the planted habits, and fit a phone screen.
+- **Public demo:** served from a sub-path with no server behind it, it must make no request to anything but its own files, compile no WebAssembly, answer every ranking mode in the page, lead its repeats with the planted habits, and fit a phone screen.
+- **Guided tour:** every card reachable by keyboard, by its dots and by a real scroll, each one lighting what it describes; it fits a phone, works with reduced motion, and leaves the viewer as it found it. A unit test checks that every result quoted on its last card appears in RESULTS.md.
 - **Repeat-finder:** a hand-built store where one habit must be found and one-session emphasis, a same-day burst and a program's template must all be left out; a threshold that is not dragged up by the repeats themselves; and recovery of the instructions planted in the demo data.
 
 ## What this does not show

@@ -76,6 +76,18 @@ export class OrbitRig {
     this.goal = null;
   }
 
+  private homeView: { target: THREE.Vector3; distance: number } | null = null;
+
+  /** Remembers the view that frames the whole field. */
+  setHome(point: THREE.Vector3, distance: number): void {
+    this.homeView = { target: point.clone(), distance };
+  }
+
+  /** Eases back to the view that frames the whole field, if one has been set. */
+  home(): void {
+    if (this.homeView) this.focus(this.homeView.target, this.homeView.distance);
+  }
+
   /** Eases the camera to look at `point` from `distance` away. */
   focus(point: THREE.Vector3, distance: number): void {
     this.goal = { target: point.clone(), distance };

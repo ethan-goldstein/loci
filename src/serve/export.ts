@@ -45,6 +45,8 @@ export interface ViewerData {
   sentences: Uint8Array;
   /** Per particle: index into `manifest.clusters`. */
   cluster: Uint8Array;
+  /** Per particle: the highest layer of the HNSW graph the chunk is on (0 for most). */
+  level: Uint8Array;
   /** Engine node -> particle index. */
   rankOf: Int32Array;
   /** Particle index -> engine node. */
@@ -91,6 +93,7 @@ export function buildViewerData(engine: Engine, opts: { demo: boolean; model: st
   const clusters = labelClusters(texts, regions.assign, k);
   const sentences = Uint8Array.from(texts, (t) => sentenceCount(t));
   const cluster = Uint8Array.from(regions.assign);
+  const level = Uint8Array.from(nodeAt, (node) => Math.min(255, engine.hnsw.level(node)));
 
   const stats = engine.hnsw.stats();
   return {
@@ -114,6 +117,7 @@ export function buildViewerData(engine: Engine, opts: { demo: boolean; model: st
     meta,
     sentences,
     cluster,
+    level,
     rankOf,
     nodeAt,
   };

@@ -214,6 +214,11 @@ export class Hud {
     return this.focused;
   }
 
+  /** Empties the search box. */
+  clearQuery(): void {
+    this.input.value = '';
+  }
+
   /** Types a query into the box and runs it, as if the person had. */
   search(query: string): void {
     this.input.value = query;

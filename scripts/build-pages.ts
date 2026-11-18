@@ -71,6 +71,7 @@ try {
     ['meta.u32', bytes(data.meta)],
     ['sentences.u8', bytes(data.sentences)],
     ['cluster.u8', bytes(data.cluster)],
+    ['level.u8', bytes(data.level)],
     // Node order, the order the index refers to.
     ['vectors.f32', bytes(engine.vectors.subarray(0, n * engine.dim))],
     ['hnsw.bin', engine.hnsw.toBytes()],
