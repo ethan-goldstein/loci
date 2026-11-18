@@ -1,6 +1,8 @@
 # Preregistration: does recalled context make an agent's answers better?
 
-Written and committed on 2026-11-16, before the harness (`src/prove/ab.ts`) existed and before any answering arm was run on the private store. The git history is the evidence of that order: this file, then the harness, then the results.
+Written and committed on 2026-11-16, before the harness (`src/prove/ab.ts`) existed and before any answering arm was run on the private store. The order was: this file, then the harness, then the results.
+
+**What a reader can and cannot check (added 2026-11-17).** This file used to say that the git history is the evidence of that order. That is no longer true of the public repository, which was published from a single clean commit on 2026-11-17. The commits that show the order (this file at 17:11 as `2dc4853`, the harness at 17:23 as `16ee8b1`, both on 2026-11-16) are in the author's local pre-release history. That history is not published, because early test fixtures in it echoed private text. So the order above is the author's statement and cannot be verified from this repository.
 
 Anything changed after this commit is listed under [Deviations](#deviations) at the bottom, with the reason.
 
@@ -190,3 +192,7 @@ Three changes were then made to how the report words the result. None changes a 
 1. **One sentence was made less favourable to memory.** The sentence under the averaging table used to end `Read that as "probably a gain", not as settled.` That over-read this table: three of its five rows are the same calculation (every session produced all 4 questions), and the one row whose interval excludes zero is the every-project average that this file set aside in advance for giving one-session projects a full share and too narrow an interval. The sentence now names the rows that exclude zero and says the verdict stays with the headline, and two sentences of explanation follow it.
 2. **A disagreement between the two outcomes is stated next to the verdict.** On the model-free outcome the same difference has an interval just above zero. That was already in the tables and in the secondary list; it is now also said in the paragraph after the verdict, so a reader who stops there sees it.
 3. **The "wrong, not an abstention" analysis got a sentence.** It was planned above and already in the arm table. Its result is large (12% without context, 55% with), so it is now also written out in the secondary list.
+
+### Note: the MCP default changed after the run
+
+Added 2026-11-17, after the results were final. The `memory` arm was defined as hybrid search with the MCP server's defaults. The MCP search tool has since gained near-duplicate folding, on by default. The harness is pinned to plain hybrid search, which is what was run, so a re-run reproduces the experiment as it was preregistered.
