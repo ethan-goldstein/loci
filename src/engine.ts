@@ -8,6 +8,7 @@ import { BM25 } from './index/bm25.ts';
 import { DEFAULT_PARAMS, Hnsw } from './index/hnsw.ts';
 import type { HnswParams } from './index/hnsw.ts';
 import { loadVectors } from './index/vecfile.ts';
+import { loadSimdKernel } from './kernel/simd.ts';
 import { allowFor, searchCore } from './search/core.ts';
 import type { EngineHit, Filter, SearchRequest, SearchResult } from './search/core.ts';
 
@@ -25,6 +26,13 @@ export interface EngineOptions {
   params?: HnswParams;
   /** Persist a rebuilt or extended index. Off for read-only consumers that should never write. */
   save?: boolean;
+  /**
+   * Which inner loop searches use. 'auto' (the default) takes the WebAssembly SIMD kernel when the
+   * runtime supports it and falls back to TypeScript otherwise. 'js' forces TypeScript: the eval,
+   * the A/B test and the repeat-finder use it, so their published numbers cannot move for a
+   * reason of arithmetic. Setting LOCI_KERNEL=js does the same from outside.
+   */
+  kernel?: 'auto' | 'js';
   onProgress?: (stage: string, done: number, total: number) => void;
 }
 
@@ -127,6 +135,12 @@ export class Engine {
       const tmp = `${p.hnsw}.${process.pid}.tmp`;
       fs.writeFileSync(tmp, hnsw.toBuffer(), { mode: 0o600 });
       fs.renameSync(tmp, p.hnsw);
+    }
+
+    // The graph is built and saved with the TypeScript loop above. Only searching uses the kernel.
+    if ((opts.kernel ?? 'auto') === 'auto' && process.env.LOCI_KERNEL !== 'js') {
+      const kernel = loadSimdKernel(vec.data, vec.dim, n);
+      if (kernel) hnsw.useKernel(kernel);
     }
 
     const bm25 = BM25.build(texts);

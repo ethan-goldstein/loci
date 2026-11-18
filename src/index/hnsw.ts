@@ -33,6 +33,23 @@ export interface Hit {
 /** One step of a search: at `layer`, `node` was evaluated while expanding `parent` (-1 for the entry point). */
 export type TraceStep = [layer: number, node: number, parent: number, sim: number];
 
+/**
+ * A faster way to compare one query with stored rows (see src/kernel). Used by `search` and
+ * `exact` only. The graph is always BUILT with `dot` below, so an index is the same bytes
+ * whichever kernel later searches it, and saved indexes and their tests are unaffected.
+ */
+export interface QueryKernel {
+  readonly name: string;
+  /** How many rows the kernel holds. It is ignored if the index has grown past this. */
+  readonly n: number;
+  /** Loads the query that the following calls compare against. */
+  setQuery(q: Float32Array): void;
+  /** Similarity of the loaded query to one row. */
+  toRow(node: number): number;
+  /** Similarity of the loaded query to rows 0..count-1, written to `into`. */
+  scan(count: number, into: Float32Array): void;
+}
+
 export interface SearchOptions {
   /** Only nodes passing this test may be returned. Traversal still walks through the rest. */
   allow?: (id: number) => boolean;
@@ -84,6 +101,8 @@ export class Hnsw {
   private upper: (Uint32Array | undefined)[] = [];
   private visited = new Uint32Array(0);
   private epoch = 0;
+  private kernel: QueryKernel | null = null;
+  private scanOut = new Float32Array(0);
   private rng: number;
   private readonly mL: number;
   private readonly cand = new Heap(false, 256);
@@ -111,6 +130,20 @@ export class Hnsw {
     const index = new Hnsw(vectors, dim, params);
     index.extend(count, onProgress);
     return index;
+  }
+
+  /** Uses `kernel` for searches from now on, or the built-in loop when given null. */
+  useKernel(kernel: QueryKernel | null): void {
+    this.kernel = kernel;
+  }
+
+  /** The kernel searches will use: the attached one if it covers every row, else none. */
+  private activeKernel(): QueryKernel | null {
+    return this.kernel && this.kernel.n >= this.n ? this.kernel : null;
+  }
+
+  get kernelName(): string {
+    return this.activeKernel()?.name ?? 'js';
   }
 
   /** Points the index at a (longer) vector array, e.g. after new chunks were embedded. */
@@ -183,6 +216,7 @@ export class Hnsw {
     layer: number,
     allow?: (id: number) => boolean,
     trace?: TraceStep[],
+    kernel: QueryKernel | null = null,
   ): { ids: Int32Array; keys: Float64Array } {
     const { M, M0 } = this.params;
     const dim = this.dim;
@@ -227,7 +261,7 @@ export class Hnsw {
         const e = arr[off + i]!;
         if (visited[e] === epoch) continue;
         visited[e] = epoch;
-        const d = 1 - dot(q, qo, vectors, e * dim, dim);
+        const d = 1 - (kernel ? kernel.toRow(e) : dot(q, qo, vectors, e * dim, dim));
         if (res.size < ef || d < res.peekKey()) {
           cand.push(d, e);
           if (!allow || allow(e)) {
@@ -318,7 +352,7 @@ export class Hnsw {
   }
 
   /** One greedy step-down through a layer: move to whichever neighbour is nearer until none is. */
-  private greedy(q: Float32Array, qo: number, start: number, startDist: number, layer: number, trace?: TraceStep[]): [number, number] {
+  private greedy(q: Float32Array, qo: number, start: number, startDist: number, layer: number, trace?: TraceStep[], kernel: QueryKernel | null = null): [number, number] {
     const { M } = this.params;
     let ep = start;
     let epDist = startDist;
@@ -331,7 +365,7 @@ export class Hnsw {
       const from = ep;
       for (let i = 0; i < cnt; i++) {
         const e = arr[base + 1 + i]!;
-        const d = 1 - dot(q, qo, this.vectors, e * this.dim, this.dim);
+        const d = 1 - (kernel ? kernel.toRow(e) : dot(q, qo, this.vectors, e * this.dim, this.dim));
         if (d < epDist) {
           epDist = d;
           ep = e;
@@ -386,11 +420,13 @@ export class Hnsw {
     if (q.length !== this.dim) throw new Error(`query has dimension ${q.length}, index has ${this.dim}`);
     if (this.n === 0 || k <= 0) return [];
     const { trace, allow } = opts;
+    const kernel = this.activeKernel();
+    kernel?.setQuery(q);
     let ep = this.entry;
-    let epDist = 1 - dot(q, 0, this.vectors, ep * this.dim, this.dim);
+    let epDist = 1 - (kernel ? kernel.toRow(ep) : dot(q, 0, this.vectors, ep * this.dim, this.dim));
     if (trace && trace.length < TRACE_CAP) trace.push([this.maxLevel, ep, -1, 1 - epDist]);
-    for (let l = this.maxLevel; l >= 1; l--) [ep, epDist] = this.greedy(q, 0, ep, epDist, l, trace);
-    const found = this.searchLayer(q, 0, [ep], [epDist], Math.max(ef, k), 0, allow, trace);
+    for (let l = this.maxLevel; l >= 1; l--) [ep, epDist] = this.greedy(q, 0, ep, epDist, l, trace, kernel);
+    const found = this.searchLayer(q, 0, [ep], [epDist], Math.max(ef, k), 0, allow, trace, kernel);
     const out: Hit[] = [];
     for (let i = 0; i < found.ids.length && out.length < k; i++) out.push({ id: found.ids[i]!, sim: 1 - found.keys[i]! });
     return out;
@@ -399,7 +435,13 @@ export class Hnsw {
   /** Exact `k` nearest neighbours by scanning every node. The oracle the graph is measured against. */
   exact(q: Float32Array, k: number, allow?: (id: number) => boolean): Hit[] {
     if (q.length !== this.dim) throw new Error(`query has dimension ${q.length}, index has ${this.dim}`);
-    return exactTopK(this.vectors, this.dim, this.n, q, k, allow);
+    const kernel = this.activeKernel();
+    if (!kernel) return exactTopK(this.vectors, this.dim, this.n, q, k, allow);
+    // One pass in the kernel fills a similarity per row; picking the best k stays here.
+    if (this.scanOut.length < this.n) this.scanOut = new Float32Array(this.n);
+    kernel.setQuery(q);
+    kernel.scan(this.n, this.scanOut);
+    return topKOf(this.scanOut, this.n, k, allow);
   }
 
   level(node: number): number {
@@ -547,6 +589,26 @@ export function exactTopK(
       heap.push(s, i);
     }
   }
+  return drainBest(heap);
+}
+
+/** The same selection over similarities that were already computed, one per row. */
+function topKOf(sims: Float32Array, n: number, k: number, allow?: (id: number) => boolean): Hit[] {
+  if (k <= 0 || n === 0) return [];
+  const heap = new Heap(false, k + 1);
+  for (let i = 0; i < n; i++) {
+    if (allow && !allow(i)) continue;
+    const s = sims[i]!;
+    if (heap.size < k) heap.push(s, i);
+    else if (s > heap.peekKey()) {
+      heap.pop();
+      heap.push(s, i);
+    }
+  }
+  return drainBest(heap);
+}
+
+function drainBest(heap: Heap): Hit[] {
   const { ids, keys } = heap.drainAscending();
   const out: Hit[] = [];
   for (let i = ids.length - 1; i >= 0; i--) out.push({ id: ids[i]!, sim: keys[i]! });

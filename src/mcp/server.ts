@@ -98,7 +98,7 @@ export function buildServer(engine: Engine): McpServer {
 
 export async function startMcp(cfg: Config): Promise<void> {
   // save:false: this process never writes to the store, even if the index on disk is stale.
-  const engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel, 20_000), save: false });
+  const engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel, 20_000, 0), save: false });
   const server = buildServer(engine);
   const transport = new StdioServerTransport();
   const shutdown = () => {
