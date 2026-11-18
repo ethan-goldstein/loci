@@ -8,6 +8,7 @@ async function ready(page: import('@playwright/test').Page): Promise<void> {
 }
 
 test('draws one particle per chunk and the simulation moves them', async ({ page }) => {
+  test.slow(); // the first load on a software renderer is the slowest thing in the suite
   const errors: string[] = [];
   page.on('console', (m) => m.type() === 'error' && errors.push(m.text()));
   page.on('pageerror', (e) => errors.push(e.message));
@@ -17,10 +18,12 @@ test('draws one particle per chunk and the simulation moves them', async ({ page
   await expect(page.locator('#summary')).toContainText('6,000 chunks');
   await expect(page.locator('#fatal')).toBeHidden();
 
-  // Positions read back from the GPU must change while the layout settles.
-  await expect.poll(async () => Number(await page.locator(stage).getAttribute('data-frame')), { timeout: 20_000 }).toBeGreaterThan(40);
+  // Positions read back from the GPU must change while the layout settles. The page reports its
+  // frame count and a sample of positions every 40 frames, and a software renderer on a shared
+  // CI machine can manage only two or three frames a second, so these waits are generous.
+  await expect.poll(async () => Number(await page.locator(stage).getAttribute('data-frame')), { timeout: 60_000 }).toBeGreaterThanOrEqual(40);
   const first = await page.locator(stage).getAttribute('data-sample');
-  await expect.poll(async () => page.locator(stage).getAttribute('data-sample'), { timeout: 20_000 }).not.toBe(first);
+  await expect.poll(async () => page.locator(stage).getAttribute('data-sample'), { timeout: 60_000 }).not.toBe(first);
   const sample = (await page.locator(stage).getAttribute('data-sample'))!.split(',').map(Number);
   expect(sample.every(Number.isFinite)).toBe(true);
   expect(errors).toEqual([]);
@@ -199,6 +202,7 @@ test('where the time goes: figures and charts from counts only', async ({ page }
 });
 
 test('the guided tour opens over the local viewer and leaves it as it was', async ({ page }) => {
+  test.slow(); // eight steps, each waiting on a software renderer
   await ready(page);
   await page.locator('#tour-open').click();
   await expect(page.locator('#tour')).toBeVisible();

@@ -244,6 +244,7 @@ async function tourAt(page: Page, i: number): Promise<void> {
 }
 
 test('the guided tour walks the real index, by keyboard and by scrolling', async ({ page }) => {
+  test.slow(); // several page loads or steps, each waiting on a software renderer
   const w = watch(page);
   await readyPastIntro(page);
   await page.locator('#tour-open').click();
@@ -325,6 +326,7 @@ test('the guided tour walks the real index, by keyboard and by scrolling', async
 });
 
 test('the address can open the tour at a step or run a search, and the welcome panel can start the tour', async ({ page }) => {
+  test.slow(); // several page loads or steps, each waiting on a software renderer
   await page.goto('./#tour=2');
   await expect(page.locator(stage)).toHaveAttribute('data-ready', '1', { timeout: 30_000 });
   // Asked for by address, so the first-visit welcome does not cover it.
@@ -351,6 +353,7 @@ test('the address can open the tour at a step or run a search, and the welcome p
 });
 
 test('the tour fits a phone and works with reduced motion', async ({ page }) => {
+  test.slow(); // several page loads or steps, each waiting on a software renderer
   const w = watch(page);
   await page.emulateMedia({ reducedMotion: 'reduce' });
   await page.setViewportSize({ width: 390, height: 844 });
