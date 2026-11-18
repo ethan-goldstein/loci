@@ -39,6 +39,46 @@ function systemTable(systems: SystemScore[]): string {
   return lines.join('\n');
 }
 
+/** Rankings derived from hybrid after the first results were seen. Reported on their own, as exploratory. */
+const DIVERSIFIED = new Set(['hybrid+fold', 'hybrid+spread']);
+
+function diversitySection(ev: EvalReport): string[] {
+  const d = ev.diversity!;
+  const score = (name: string) => ev.systems.find((x) => x.name === name);
+  const rep = (name: string) => d.systems.find((x) => x.name === name);
+  const hybrid = score('hybrid');
+  const lines = [
+    '### Folding near-copies (exploratory)',
+    '',
+    'A history is full of near-copies: the same explanation given in three sessions, the same error pasted twice. A ranker scores each on its own, so they arrive together and push everything else off the page. Two rankings derived from hybrid deal with that. They were added after the results above were first seen, so read this part as exploratory.',
+    '',
+    `- **fold** skips a result that is a near-copy of one already shown and reorders nothing else. "Near-copy" means a similarity of ${f(d.nearCopy)} or more, a threshold set from the corpus itself (five robust spreads above a typical unrelated pair), not picked by hand.`,
+    `- **spread** also trades rank for variety (maximal marginal relevance, strength ${d.spreadLambda}, fixed before it was run on this corpus).`,
+    '',
+    '| ranking | project-precision@10 | MRR | mean similarity among the top 10 | near-copy pairs in the top 10 (of 45) | of the plain top 10, replaced |',
+    '|---|---:|---:|---:|---:|---:|',
+  ];
+  for (const name of ['hybrid', 'hybrid+fold', 'hybrid+spread']) {
+    const sc = score(name);
+    const r = rep(name);
+    if (!sc || !r) continue;
+    lines.push(`| ${name} | ${ci(sc.precision)} | ${ci(sc.mrr)} | ${f(r.meanSim)} | ${r.dupPairs.toFixed(2)} | ${name === 'hybrid' ? '' : r.folded.toFixed(2)} |`);
+  }
+  const fold = score('hybrid+fold');
+  const foldRep = rep('hybrid+fold');
+  const plainRep = rep('hybrid');
+  if (hybrid && fold && foldRep && plainRep) {
+    const dp = fold.precision.value - hybrid.precision.value;
+    const dm = fold.mrr.value - hybrid.mrr.value;
+    lines.push(
+      '',
+      `**What it costs and buys.** Folding changes project-precision@10 by ${dp >= 0 ? '+' : ''}${f(dp)} and MRR by ${dm >= 0 ? '+' : ''}${f(dm)} against plain hybrid (point estimates on the same queries), and takes near-copy pairs in the top 10 from ${plainRep.dupPairs.toFixed(2)} to ${foldRep.dupPairs.toFixed(2)} per query. The same-project label can only price diversity, never reward it: a different chunk from the same project scores exactly what the copy it replaced did. So this table shows what folding costs on this measure and how much repetition it removes. It does not show that the result list is more useful.`,
+    );
+  }
+  lines.push('', 'Folding is on by default in the viewer, the command line and the MCP tool. Every other number in this file is from the plain ranking.', '');
+  return lines;
+}
+
 /** One sentence on whether the hybrid-versus-recency verdict holds across ways of averaging. */
 function stability(lifts: Interval[], verdicts: Set<string>): string {
   if (verdicts.size === 1) return `Hybrid ${[...verdicts][0]} recency under all three.`;
@@ -277,7 +317,7 @@ export function renderResults(bench: BenchReport | null, ev: EvalReport | null, 
       '',
       `Scores are macro-averaged by project, over the ${ev.headlineProjects} projects with at least ${ev.minProjectQueries} queries (${ev.headlineQueries} queries). Brackets are 95% intervals from a bootstrap that resamples whole sessions within each project.`,
       '',
-      systemTable(ev.systems),
+      systemTable(ev.systems.filter((x) => !DIVERSIFIED.has(x.name))),
       '',
       '- **random** is the closed-form expectation of a random ranking: what the corpus gives away for free.',
       '- **majority** always answers with the largest project.',
@@ -357,6 +397,8 @@ export function renderResults(bench: BenchReport | null, ev: EvalReport | null, 
       );
     }
   }
+
+  if (ev?.diversity) out.push(...diversitySection(ev));
 
   if (ab) out.push(...abSection(ab));
 

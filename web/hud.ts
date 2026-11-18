@@ -239,6 +239,7 @@ export class Hud {
     const parts = [`${res.hits.length} results`, `${res.ms} ms`];
     if (res.dense === 'hnsw') parts.push(`graph search visited ${visited} nodes over ${layers} layers`);
     else if (res.dense === 'exact') parts.push('exact scan (narrow filter)');
+    if (res.folded > 0) parts.push(`${res.folded} near-${res.folded === 1 ? 'copy' : 'copies'} folded`);
     if (res.degraded) parts.push('embedding model unreachable: keywords only');
     this.resultsStats.textContent = parts.join(' · ');
     this.resultsList.replaceChildren();

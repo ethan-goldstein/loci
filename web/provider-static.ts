@@ -1,7 +1,7 @@
 import { BM25 } from '../src/index/bm25.ts';
 import { Hnsw } from '../src/index/hnsw.ts';
 import { hashEmbedder } from '../src/prove/hash-embed.ts';
-import { searchCore } from '../src/search/core.ts';
+import { DIVERSIFY_DEFAULT, searchCore } from '../src/search/core.ts';
 import type { CorpusView } from '../src/search/core.ts';
 import { clip, shapeChunk, shapeSearch } from '../src/serve/shape.ts';
 import type { Describe } from '../src/serve/shape.ts';
@@ -142,7 +142,7 @@ export async function search(q: string, mode: Mode, project: number | null): Pro
   const projectId = project === null ? undefined : file.projectIds[project];
   const t0 = performance.now();
   const qvec = mode === 'bm25' ? null : ((await embedder.embed([query], 'query'))[0] ?? null);
-  const res = searchCore(view, query, qvec, { k: 12, mode, projectId, trace: true });
+  const res = searchCore(view, query, qvec, { k: 12, mode, projectId, trace: true, diversify: DIVERSIFY_DEFAULT });
   return shapeSearch(res, describe, file.rankOf, { ms: performance.now() - t0, mode, degraded: false });
 }
 

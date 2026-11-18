@@ -1,4 +1,5 @@
 import type { Engine, EngineHit, Mode } from '../engine.ts';
+import { DIVERSIFY_DEFAULT } from '../search/core.ts';
 
 /**
  * Tool handlers for the MCP server, kept free of any SDK types so they can be unit-tested and so
@@ -117,11 +118,11 @@ export async function searchTool(engine: Engine, args: SearchArgs): Promise<stri
   let note = '';
   let res;
   try {
-    res = await engine.search(query, { k, mode, ...filter });
+    res = await engine.search(query, { k, mode, diversify: DIVERSIFY_DEFAULT, ...filter });
   } catch (err) {
     if (mode === 'bm25') throw err;
     // The embedding model is unreachable: keyword search still works, so degrade rather than fail.
-    res = await engine.search(query, { k, mode: 'bm25', ...filter });
+    res = await engine.search(query, { k, mode: 'bm25', diversify: DIVERSIFY_DEFAULT, ...filter });
     note = 'Note: the local embedding model was unreachable, so this is keyword-only search.\n\n';
   }
   if (res.hits.length === 0) return wrap(`${note}No matches.`);

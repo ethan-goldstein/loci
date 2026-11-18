@@ -7,6 +7,7 @@ import type { Config } from '../config.ts';
 import { ollamaEmbedder } from '../embed/ollama.ts';
 import { Engine } from '../engine.ts';
 import type { Mode } from '../engine.ts';
+import { DIVERSIFY_DEFAULT } from '../search/core.ts';
 import { runRepeats } from '../insight/repeats.ts';
 import type { RepeatGroup, RepeatsReport } from '../insight/repeats.ts';
 import { buildDemoStore, hashEmbedder } from '../prove/demo.ts';
@@ -151,6 +152,8 @@ export function createHandler(engine: Engine, data: ViewerData, port: number, op
       const mode = (q.get('mode') ?? 'hybrid') as Mode;
       if (mode !== 'hybrid' && mode !== 'dense' && mode !== 'bm25' && mode !== 'recent') throw new HttpError(400, 'mode must be hybrid, dense, bm25 or recent');
       const k = intParam(q, 'k', 12, 1, 50);
+      // Near-copies are folded unless the caller asks for the plain ranking with diverse=0.
+      const diversify = intParam(q, 'diverse', 1, 0, 1) === 1 ? DIVERSIFY_DEFAULT : undefined;
       let projectId: number | undefined;
       if (q.has('project')) {
         const p = projectByIndex[intParam(q, 'project', 0, 0, Math.max(0, projectByIndex.length - 1))];
@@ -160,10 +163,10 @@ export function createHandler(engine: Engine, data: ViewerData, port: number, op
       let res;
       let degraded = false;
       try {
-        res = await engine.search(query, { k, mode, projectId, trace: true });
+        res = await engine.search(query, { k, mode, projectId, trace: true, diversify });
       } catch {
         if (mode === 'bm25') throw new HttpError(500, 'Search failed');
-        res = await engine.search(query, { k, mode: 'bm25', projectId });
+        res = await engine.search(query, { k, mode: 'bm25', projectId, diversify });
         degraded = true; // embedding model unreachable: keyword search still answers
       }
       return json(shapeSearch(res, describe, data.rankOf, { ms: performance.now() - t0, mode: degraded ? 'bm25' : mode, degraded }));
@@ -252,7 +255,7 @@ export async function startServer(cfg: Config, opts: ServerOptions = {}): Promis
     engine = Engine.open(demoCfg, { embedder: hashEmbedder(), save: false });
     model = demoCfg.embedModel;
   } else {
-    engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel, 20_000), save: true });
+    engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel, 20_000, 0), save: true });
   }
   const data = buildViewerData(engine, { demo: opts.demo === true, model });
   // Repeats: computed on the spot for the demo (fast, no model); read from the private store otherwise.

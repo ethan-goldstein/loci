@@ -1,7 +1,9 @@
 import type { BM25 } from '../index/bm25.ts';
 import { rrf } from '../index/fusion.ts';
-import { exactTopK } from '../index/hnsw.ts';
+import { dot } from '../index/hnsw.ts';
 import type { Hnsw, TraceStep } from '../index/hnsw.ts';
+import { calibrate } from '../index/simstats.ts';
+import { pickDiverse } from './diverse.ts';
 
 /**
  * The search itself, with no dependency on files, SQLite or Node. The local engine calls this
@@ -32,7 +34,15 @@ export interface SearchRequest extends Filter {
   /** HNSW candidate list size. Larger is slower and more accurate. */
   ef?: number;
   trace?: boolean;
+  /**
+   * Keep near-copies from filling the list (see diverse.ts). Absent: off, the plain ranking.
+   * 1: fold near-copies. Below 1: also trade rank for variety, more strongly the lower it is.
+   */
+  diversify?: number;
 }
+
+/** What the viewer, the command line and the MCP server use: fold near-copies, reorder nothing else. */
+export const DIVERSIFY_DEFAULT = 1;
 
 export interface EngineHit {
   node: number;
@@ -49,6 +59,8 @@ export interface SearchResult {
   trace: TraceStep[] | null;
   /** How the dense side was answered: the graph, an exact scan (restrictive filter), or not at all. */
   dense: 'hnsw' | 'exact' | 'none';
+  /** Near-copies left out of the list. Always 0 when `diversify` is off. */
+  folded: number;
 }
 
 /** Everything a search reads. All arrays are indexed by node. */
@@ -69,6 +81,21 @@ export interface CorpusView {
 }
 
 const POOL = 100;
+
+/**
+ * When are two chunks near-copies? Decided from the corpus itself, once per corpus: well above
+ * the similarity of a typical unrelated pair (see simstats.ts). Cached, because it does not change.
+ */
+const nearCopy = new WeakMap<CorpusView, { tau: number; median: number }>();
+export function nearCopyThreshold(view: CorpusView): { tau: number; median: number } {
+  let t = nearCopy.get(view);
+  if (!t) {
+    const c = calibrate(view.vectors, view.dim, view.n, view.sessionPk, 5, 17, 20_000);
+    t = { tau: c.tau, median: c.median };
+    nearCopy.set(view, t);
+  }
+  return t;
+}
 /** Below this share of allowed nodes a filtered graph walk wastes effort; scan the few instead. */
 const EXACT_BELOW = 0.2;
 
@@ -106,7 +133,7 @@ export function searchCore(view: CorpusView, query: string, qvec: Float32Array |
       share = ok / Math.max(view.n, 1);
     }
     if (share < EXACT_BELOW) {
-      dense = exactTopK(view.vectors, view.dim, view.n, qvec, pool, allow);
+      dense = view.hnsw.exact(qvec, pool, allow);
       denseHow = 'exact';
     } else {
       const ef = Math.min(Math.max(req.ef ?? 128, pool), 2048);
@@ -117,13 +144,15 @@ export function searchCore(view: CorpusView, query: string, qvec: Float32Array |
   const lexical = mode !== 'dense' ? view.bm25.search(query, pool, allow) : [];
 
   const simOf = new Map(dense.map((d) => [d.id, d.sim]));
-  const hits: EngineHit[] = [];
-  if (mode === 'dense') {
-    dense.slice(0, k).forEach((d, i) => hits.push({ node: d.id, chunkId: d.id + 1, score: d.sim, sim: d.sim, denseRank: i + 1, bm25Rank: 0 }));
-  } else if (mode === 'bm25') {
-    lexical.slice(0, k).forEach((s, i) => hits.push({ node: s.doc, chunkId: s.doc + 1, score: s.score, sim: null, denseRank: 0, bm25Rank: i + 1 }));
-  } else {
-    const lists = [dense.map((d) => d.id), lexical.map((s) => s.doc)];
+  const denseRank = new Map(dense.map((d, i) => [d.id, i + 1]));
+  const bm25Rank = new Map(lexical.map((x, i) => [x.doc, i + 1]));
+
+  // Every mode produces one ranked list of candidates with a score each; the hits are built from it.
+  let ranked: { id: number; score: number }[];
+  if (mode === 'dense') ranked = dense.map((d) => ({ id: d.id, score: d.sim }));
+  else if (mode === 'bm25') ranked = lexical.map((x) => ({ id: x.doc, score: x.score }));
+  else {
+    const lists = [dense.map((d) => d.id), lexical.map((x) => x.doc)];
     if (mode === 'recent') {
       const recent: number[] = [];
       for (let i = 0; i < view.n && recent.length < pool; i++) {
@@ -132,9 +161,29 @@ export function searchCore(view: CorpusView, query: string, qvec: Float32Array |
       }
       lists.push(recent);
     }
-    for (const f of rrf(lists, k)) {
-      hits.push({ node: f.id, chunkId: f.id + 1, score: f.score, sim: simOf.get(f.id) ?? null, denseRank: f.ranks[0]!, bm25Rank: f.ranks[1]! });
-    }
+    ranked = rrf(lists, pool).map((f) => ({ id: f.id, score: f.score }));
   }
-  return { hits, trace, dense: denseHow };
+
+  let folded = 0;
+  if (req.diversify === undefined) ranked = ranked.slice(0, k);
+  else {
+    // Only the top few times k are considered, so nothing ranked far down can be promoted.
+    const candidates = ranked.slice(0, Math.max(3 * k, 30));
+    const scoreOf = new Map(candidates.map((c) => [c.id, c.score]));
+    const { tau, median } = nearCopyThreshold(view);
+    const sim = (a: number, b: number) => dot(view.vectors, a * view.dim, view.vectors, b * view.dim, view.dim);
+    const out = pickDiverse(candidates.map((c) => c.id), k, sim, { dupSim: tau, lambda: req.diversify, baseline: median });
+    folded = out.folded;
+    ranked = out.picked.map((id) => ({ id, score: scoreOf.get(id)! }));
+  }
+
+  const hits: EngineHit[] = ranked.map((r) => ({
+    node: r.id,
+    chunkId: r.id + 1,
+    score: r.score,
+    sim: simOf.get(r.id) ?? null,
+    denseRank: denseRank.get(r.id) ?? 0,
+    bm25Rank: bm25Rank.get(r.id) ?? 0,
+  }));
+  return { hits, trace, dense: denseHow, folded };
 }

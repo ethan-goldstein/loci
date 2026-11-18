@@ -61,6 +61,8 @@ export default defineConfig(({ mode }) => {
       include: ['tests/unit/**/*.test.ts'],
       environment: 'node',
       testTimeout: 30_000,
+      // Setup hooks build whole demo stores; give them the same room as the tests on a busy machine.
+      hookTimeout: 30_000,
     },
   };
 });

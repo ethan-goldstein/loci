@@ -89,6 +89,11 @@ test('the welcome panel can start a search, which runs in the page', async ({ pa
   await expect(page.locator(stage)).toHaveAttribute('data-hits', '12');
   expect(Number(await page.locator(stage).getAttribute('data-trace-steps'))).toBeGreaterThan(10);
 
+  // Near-copies are folded: the list is not one reply repeated, and the line above it says so.
+  await expect(page.locator('#results-stats')).toContainText('folded');
+  const openings = (await page.locator('#results-list .hit-text').allTextContents()).map((t) => t.trim().slice(0, 48));
+  expect(new Set(openings).size).toBeGreaterThanOrEqual(7);
+
   // Every ranking mode works without a server.
   for (const mode of ['dense', 'bm25', 'recent', 'hybrid']) {
     await page.locator(`#search-modes button[data-mode="${mode}"]`).click();

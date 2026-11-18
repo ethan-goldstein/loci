@@ -7,6 +7,7 @@ import { ollamaEmbedder } from './embed/ollama.ts';
 import { embedAll } from './embed/run.ts';
 import { Engine } from './engine.ts';
 import type { Mode } from './engine.ts';
+import { DIVERSIFY_DEFAULT } from './search/core.ts';
 import { ingest, ingestChatGpt } from './ingest/run.ts';
 import { Store } from './ingest/store.ts';
 
@@ -124,7 +125,7 @@ const commands: Record<string, { help: string; run: Command }> = {
     },
   },
   search: {
-    help: 'Search your history. Flags: --k 10 --mode hybrid|dense|bm25 --project <name> --json',
+    help: 'Search your history. Flags: --k 10 --mode hybrid|dense|bm25|recent --project <name> --plain (do not fold near-copies) --json',
     run: async (cfg, args, flags) => {
       const query = args.join(' ').trim();
       if (!query) throw new Error('Usage: loci search <words> [--k 10] [--mode hybrid|dense|bm25] [--project name]');
@@ -141,11 +142,11 @@ const commands: Record<string, { help: string; run: Command }> = {
           projectId = match.id;
         }
         const t0 = performance.now();
-        const res = await engine.search(query, { k: num(flags, 'k', 10, 1, 100), mode, projectId });
+        const res = await engine.search(query, { k: num(flags, 'k', 10, 1, 100), mode, projectId, diversify: flags.plain ? undefined : DIVERSIFY_DEFAULT });
         const ms = performance.now() - t0;
         const hits = res.hits.map((h) => engine.describe(h, 300));
         if (flags.json) {
-          console.log(JSON.stringify({ ms: Number(ms.toFixed(1)), dense: res.dense, hits }, null, 2));
+          console.log(JSON.stringify({ ms: Number(ms.toFixed(1)), dense: res.dense, folded: res.folded, hits }, null, 2));
           return;
         }
         console.log(`${hits.length} results in ${ms.toFixed(0)} ms (${mode}, dense side: ${res.dense})\n`);

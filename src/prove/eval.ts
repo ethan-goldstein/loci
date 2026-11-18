@@ -2,7 +2,9 @@ import type { Engine, Mode } from '../engine.ts';
 import type { Embedder } from '../embed/ollama.ts';
 import { BM25 } from '../index/bm25.ts';
 import { rrf } from '../index/fusion.ts';
-import { exactTopK } from '../index/hnsw.ts';
+import { dot, exactTopK } from '../index/hnsw.ts';
+import { nearCopyThreshold } from '../search/core.ts';
+import { redundancy } from '../search/diverse.ts';
 import { clusterBootstrap, macroMean } from './bootstrap.ts';
 import type { Interval } from './bootstrap.ts';
 
@@ -26,6 +28,8 @@ import type { Interval } from './bootstrap.ts';
  */
 
 export const K = 10;
+/** Strength of the "spread" system. Chosen before it was run on the real corpus, and not tuned on it. */
+export const SPREAD_LAMBDA = 0.5;
 /**
  * A project needs at least this many queries to count in the headline average. The headline is a
  * mean over projects, so without a floor one project with a single query weighs as much as one
@@ -76,6 +80,17 @@ export interface EvalReport {
   masked: SystemScore[] | null;
   perProject: { label: string; queries: number; random: number; recency: number; hybrid: number; fused: number }[];
   knownItem: { queries: number; systems: { name: string; hit1: number; hit10: number; mrr: number }[]; randomHit10: number } | null;
+  /**
+   * How repetitive each ranking's top results are, and what folding near-copies does to it.
+   * Absent from reports written before this was measured.
+   */
+  diversity?: {
+    /** Two chunks at or above this similarity count as near-copies (set from the corpus). */
+    nearCopy: number;
+    /** Strength used for the "spread" system (maximal marginal relevance). Fixed before the run. */
+    spreadLambda: number;
+    systems: { name: string; meanSim: number; dupPairs: number; folded: number }[];
+  };
 }
 
 export function selectQueries(engine: Engine): EvalQuery[] {
@@ -209,7 +224,21 @@ export async function runEval(engine: Engine, opts: EvalOptions): Promise<EvalRe
     return counts;
   };
 
-  const rows: Record<string, Row[]> = { random: [], majority: [], recency: [], bm25: [], dense: [], hybrid: [], 'hybrid+recency': [] };
+  const rows: Record<string, Row[]> = { random: [], majority: [], recency: [], bm25: [], dense: [], hybrid: [], 'hybrid+recency': [], 'hybrid+fold': [], 'hybrid+spread': [] };
+  // Repetition among each ranking's top results, summed over queries.
+  const { tau: nearCopy } = nearCopyThreshold(engine);
+  const simOf = (a: number, b: number) => dot(engine.vectors, a * engine.dim, engine.vectors, b * engine.dim, engine.dim);
+  const rep: Record<string, { meanSim: number; dupPairs: number; folded: number }> = {
+    hybrid: { meanSim: 0, dupPairs: 0, folded: 0 },
+    'hybrid+fold': { meanSim: 0, dupPairs: 0, folded: 0 },
+    'hybrid+spread': { meanSim: 0, dupPairs: 0, folded: 0 },
+  };
+  const note = (name: string, nodes: number[], folded: number) => {
+    const r = redundancy(nodes, simOf, nearCopy);
+    rep[name]!.meanSim += r.meanSim;
+    rep[name]!.dupPairs += r.dupPairs;
+    rep[name]!.folded += folded;
+  };
   queries.forEach((q, qi) => {
     const base = { project: q.project, sessionPk: q.sessionPk };
     rows.random!.push({ ...base, ...randomExpectation(q.eligible, q.relevant) });
@@ -229,6 +258,14 @@ export async function runEval(engine: Engine, opts: EvalOptions): Promise<EvalRe
     for (const mode of ['bm25', 'dense', 'hybrid'] as Mode[]) {
       const res = engine.searchWith(q.text, qvecs[qi]!, { k: K, mode, before: q.ts, excludeSessionPk: q.sessionPk });
       rows[mode]!.push({ ...base, ...score(res.hits.map((h) => h.node), q, engine) });
+      if (mode === 'hybrid') note('hybrid', res.hits.map((h) => h.node), 0);
+    }
+    // The same hybrid ranking with near-copies folded, and with rank traded for variety.
+    for (const [name, diversify] of [['hybrid+fold', 1], ['hybrid+spread', SPREAD_LAMBDA]] as const) {
+      const res = engine.searchWith(q.text, qvecs[qi]!, { k: K, mode: 'hybrid', before: q.ts, excludeSessionPk: q.sessionPk, diversify });
+      const nodes = res.hits.map((h) => h.node);
+      rows[name]!.push({ ...base, ...score(nodes, q, engine) });
+      note(name, nodes, res.folded);
     }
     const fused = engine.searchWith(q.text, qvecs[qi]!, { k: K, mode: 'recent', before: q.ts, excludeSessionPk: q.sessionPk });
     rows['hybrid+recency']!.push({ ...base, ...score(fused.hits.map((h) => h.node), q, engine) });
@@ -241,7 +278,7 @@ export async function runEval(engine: Engine, opts: EvalOptions): Promise<EvalRe
   const headline = queries.map((q, i) => ((perProjectCount.get(q.project) ?? 0) >= MIN_PROJECT_QUERIES ? i : -1)).filter((i) => i >= 0);
   const take = (list: readonly Row[], idx: readonly number[]) => idx.map((i) => list[i]!);
 
-  const systems = ['random', 'majority', 'recency', 'bm25', 'dense', 'hybrid', 'hybrid+recency'].map((name) =>
+  const systems = ['random', 'majority', 'recency', 'bm25', 'dense', 'hybrid', 'hybrid+recency', 'hybrid+fold', 'hybrid+spread'].map((name) =>
     summarise(name, take(rows[name]!, headline), name === 'recency' ? null : take(rows.recency!, headline)),
   );
 
@@ -317,6 +354,16 @@ export async function runEval(engine: Engine, opts: EvalOptions): Promise<EvalRe
     masked,
     perProject,
     knownItem: await knownItem(engine, opts.embedder),
+    diversity: {
+      nearCopy,
+      spreadLambda: SPREAD_LAMBDA,
+      systems: Object.entries(rep).map(([name, r]) => ({
+        name,
+        meanSim: r.meanSim / Math.max(1, queries.length),
+        dupPairs: r.dupPairs / Math.max(1, queries.length),
+        folded: r.folded / Math.max(1, queries.length),
+      })),
+    },
   };
 }
 

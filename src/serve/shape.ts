@@ -29,6 +29,7 @@ export function shapeSearch(res: SearchResult, describe: Describe, rankOf: Array
     mode: info.mode,
     degraded: info.degraded,
     dense: res.dense,
+    folded: res.folded,
     hits: res.hits.map((h) => ({
       ...describe(h.node, 420),
       score: Number(h.score.toFixed(5)),

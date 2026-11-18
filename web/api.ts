@@ -48,6 +48,8 @@ export interface SearchResponse {
   mode: string;
   degraded: boolean;
   dense: 'hnsw' | 'exact' | 'none';
+  /** Near-copies left out of the list. */
+  folded: number;
   hits: Hit[];
   trace: TraceStep[];
 }
