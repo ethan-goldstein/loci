@@ -53,8 +53,13 @@ function endProgress(): void {
   if (process.stderr.isTTY) process.stderr.write('\r\x1b[K');
 }
 
-function openEngine(cfg: Config, save = true): Engine {
-  const engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel), save, onProgress: progress });
+/**
+ * `kernel` is 'js' for the measuring commands (bench, eval, ab, repeats): they use the TypeScript
+ * inner loop, so no published number can move because of how a sum was rounded. The benchmark
+ * attaches the WebAssembly kernel itself where it measures it.
+ */
+function openEngine(cfg: Config, save = true, kernel: 'auto' | 'js' = 'auto'): Engine {
+  const engine = Engine.open(cfg, { embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel), save, kernel, onProgress: progress });
   endProgress();
   return engine;
 }
@@ -163,7 +168,7 @@ const commands: Record<string, { help: string; run: Command }> = {
     help: 'Measure the index against exact search. Flags: --synthetic 50000 (0 to skip)',
     run: async (cfg, _args, flags) => {
       const { runBench } = await import('./prove/bench.ts');
-      const engine = openEngine(cfg);
+      const engine = openEngine(cfg, true, 'js');
       try {
         const report = await runBench(engine, {
           embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel),
@@ -183,7 +188,7 @@ const commands: Record<string, { help: string; run: Command }> = {
     help: 'Retrieval eval with baselines and intervals. Flags: --mask (hide names and paths)',
     run: async (cfg, _args, flags) => {
       const { runEval } = await import('./prove/eval.ts');
-      const engine = openEngine(cfg);
+      const engine = openEngine(cfg, true, 'js');
       try {
         const report = await runEval(engine, {
           embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel),
@@ -207,7 +212,7 @@ const commands: Record<string, { help: string; run: Command }> = {
       const name = typeof flags.model === 'string' ? flags.model : 'llama3.2:3b';
       if (!/^[A-Za-z0-9._:/-]{1,80}$/.test(name)) throw new Error('--model contains unexpected characters');
       const smoke = flags.sessions === undefined ? undefined : num(flags, 'sessions', 2, 1, 100_000);
-      const engine = openEngine(cfg);
+      const engine = openEngine(cfg, true, 'js');
       try {
         // Generation goes to the same loopback-only endpoint as embedding: nothing leaves this machine.
         const model = ollamaAbModel(cfg.ollamaUrl, name);
@@ -238,7 +243,7 @@ const commands: Record<string, { help: string; run: Command }> = {
     help: 'Find what you keep telling your assistant across sessions. Flags: --min-sessions 3 --z 5 --rules --json',
     run: async (cfg, _args, flags) => {
       const { runRepeats, draftRules } = await import('./insight/repeats.ts');
-      const engine = openEngine(cfg);
+      const engine = openEngine(cfg, true, 'js');
       try {
         const report = await runRepeats(engine, {
           embedder: ollamaEmbedder(cfg.ollamaUrl, cfg.embedModel),
