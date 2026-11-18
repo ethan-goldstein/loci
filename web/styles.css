@@ -112,8 +112,20 @@ body {
 
 .brand-row {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
-  gap: 8px;
+  gap: 6px 8px;
+}
+
+/* The badge and buttons move to a new line whole; their words never break. */
+.brand-row > * {
+  white-space: nowrap;
+}
+
+/* Solid enough that a region label drifting behind them does not show through. */
+.brand-row .ghost,
+.brand-row .badge {
+  background: rgba(9, 13, 20, 0.92);
 }
 
 .brand-row button {

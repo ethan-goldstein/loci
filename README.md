@@ -255,7 +255,7 @@ npm run test:e2e
 - The index is single-threaded, and the kernel speeds up the inner loop only: vectors are full 32-bit floats, nothing is quantised, and the graph is still built with the TypeScript loop. The kernel was measured on one machine.
 - Folding was added after the first retrieval results were seen, and the same-project label can only price it, never reward it. Whether a folded list is more useful to a person or an agent is not measured.
 - The session profile counts time between messages. It says nothing about what that time produced.
-- The viewer and the public demo are tested in headless Chromium with a software renderer, at desktop and phone sizes. Frame rate on a range of real GPUs and behaviour on a physical phone have not been measured. Hand control is covered by unit tests of its logic, not by a test with a real hand.
+- The viewer's tests run in headless Chromium with a software renderer, at desktop and phone sizes. On one real GPU (Apple M5, Chromium, a 2880x1800 canvas, 6,000 messages) it holds 60 frames a second, idle and during a search. That is the display's own limit, so it shows the viewer keeps up on that machine, not how much room is left. Other GPUs and a physical phone have not been measured. Hand control is covered by unit tests of its logic, not by a test with a real hand.
 - Claude Code transcripts and ChatGPT exports are the only sources ingested today. The ChatGPT importer is tested on synthetic exports in the documented format, not yet on a real one.
 
 ## Licence
